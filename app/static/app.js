@@ -265,7 +265,7 @@ function gameCard(g) {
   return h("button", { class: "game-card", onclick: () => go("clips", g.id) },
     h("span", { class: "game-card-art" }, g.cover ? h("img", { src: g.cover, alt: "", loading: "lazy" }) : h("span", null, g.name)),
     h("span", { class: "game-card-name" }, g.name),
-    h("span", { class: "meta" }, `${g.clips} ${g.clips === 1 ? "clip" : "clips"} · latest ${fmtDate(g.latest).toLowerCase()}`));
+    h("span", { class: "meta" }, `${g.clips} ${g.clips === 1 ? "clip" : "clips"} · ${fmtDate(g.latest)}`));
 }
 
 function renderNotice() {
