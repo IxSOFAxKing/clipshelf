@@ -55,6 +55,7 @@ STEAMGRIDDB_API_KEY = os.environ.get("STEAMGRIDDB_API_KEY", "").strip()
 SESSION_DAYS = int(os.environ.get("SESSION_DAYS", "30"))
 SECURE_COOKIES = _bool("SECURE_COOKIES", BASE_URL.startswith("https://"))
 
+ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "").strip() or "admin"
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 PASSWORD_WAS_GENERATED = False
 SECRET_KEY = b""

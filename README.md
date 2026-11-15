@@ -48,7 +48,12 @@ then:
 docker compose up -d
 ```
 
-Open `http://<server>:8080` and sign in with the password.
+Open `http://<server>:8080` and sign in with the username and password from
+the compose file (the username is `admin` unless you set `ADMIN_USERNAME`).
+
+The library and settings are only available after signing in. Shared clip links
+open without an account. If you would rather let visitors browse the clips you
+mark Public, turn on Settings > Sharing > Public library.
 
 Clips are private until you share them. The link button on a clip copies its
 address and, if the clip was private, makes it unlisted.
@@ -73,7 +78,8 @@ changed in the browser, the browser's value wins.
 
 | Variable | Default | What it does |
 | --- | --- | --- |
-| `ADMIN_PASSWORD` | generated | Sign-in password. If empty, one is generated, printed in the logs and saved to `/data/admin_password.txt`. Changing this value also resets a password set in the browser. |
+| `ADMIN_USERNAME` | `admin` | Sign-in username. |
+| `ADMIN_PASSWORD` | generated | Sign-in password. If empty, one is generated, printed in the logs and saved to `/data/admin_password.txt`. Changing this value also resets a username and password set in the browser. |
 | `BASE_URL` | from the request | Public address, e.g. `https://clips.example.com`. Used in share links and embeds. |
 | `SITE_NAME` | `Clipshelf` | Name shown in the header and in embeds. |
 | `DEFAULT_VISIBILITY` | `private` | Visibility for newly imported clips: `private`, `unlisted` or `public`. |
@@ -170,8 +176,8 @@ your accent colour.
 
 Run it behind a reverse proxy with HTTPS (Caddy, Nginx Proxy Manager, Traefik,
 a Cloudflare Tunnel) and set `BASE_URL` to the public address. Discord only
-embeds video served over HTTPS. Only the admin can list or change anything;
-visitors see public clips and any unlisted clip they have the link to.
+embeds video served over HTTPS. Only you can browse or change anything; visitors can open clips they have a
+link to (and browse Public clips if you turn the public library on).
 
 ## Development
 

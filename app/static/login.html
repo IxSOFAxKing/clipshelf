@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in · {{site_name}}</title>
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#0d0f14">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icons/180.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="{{site_name}}">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<link rel="stylesheet" href="/static/style.css">
+<style>:root { --accent: {{accent}}; --accent-ink: {{accent_ink}}; }</style>
+</head>
+<body class="login-page">
+<main class="login-card">
+  <div class="login-brand"><span class="brand-mark"></span><h1>{{site_name}}</h1></div>
+  <p class="login-sub">Sign in to your clip library</p>
+  <form id="login-form" novalidate>
+    <label class="field"><span>Username</span>
+      <input type="text" id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus></label>
+    <label class="field"><span>Password</span>
+      <span class="pw-wrap"><input type="password" id="password" name="password" autocomplete="current-password" required>
+        <button type="button" id="show-pw" class="link" aria-pressed="false">Show</button></span></label>
+    <div class="error" id="login-error" role="alert"></div>
+    <button class="btn primary login-btn" id="login-btn">Sign in</button>
+  </form>
+</main>
+<script id="next" type="application/json">{{next_json_raw}}</script>
+<script>
+"use strict";
+const form = document.getElementById("login-form");
+const user = document.getElementById("username"), pass = document.getElementById("password");
+const error = document.getElementById("login-error"), btn = document.getElementById("login-btn");
+const next = JSON.parse(document.getElementById("next").textContent);
+
+document.getElementById("show-pw").addEventListener("click", (e) => {
+  const show = pass.type === "password";
+  pass.type = show ? "text" : "password";
+  e.target.textContent = show ? "Hide" : "Show";
+  e.target.setAttribute("aria-pressed", show);
+});
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  error.textContent = "";
+  if (!user.value.trim()) { error.textContent = "Enter your username."; return user.focus(); }
+  if (!pass.value) { error.textContent = "Enter your password."; return pass.focus(); }
+  btn.disabled = true;
+  btn.textContent = "Signing in…";
+  try {
+    const res = await fetch("/api/login", { method: "POST", credentials: "same-origin",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: user.value, password: pass.value }) });
+    if (res.ok) { location.replace(next); return; }
+    const data = await res.json().catch(() => null);
+    error.textContent = (data && data.detail) || "Couldn't sign in. Try again.";
+    pass.select();
+  } catch {
+    error.textContent = "Couldn't reach the server. Check your connection and try again.";
+  }
+  btn.disabled = false;
+  btn.textContent = "Sign in";
+});
+</script>
+</body>
+</html>

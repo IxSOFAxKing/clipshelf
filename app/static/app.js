@@ -54,7 +54,7 @@ function renderTopbar() {
         setTimeout(refreshAll, 9000);
       } }, icon("refresh")),
       h("a", { class: "icon-btn", href: "/settings", title: "Settings", "aria-label": "Settings" }, icon("settings")),
-      h("button", { class: "btn ghost", onclick: async () => { await api("/api/logout", { method: "POST" }); location.reload(); } }, "Sign out"));
+      h("button", { class: "btn ghost", onclick: async () => { await api("/api/logout", { method: "POST" }); location.href = "/"; } }, "Sign out"));
   } else {
     fill($("topbar-actions"), h("button", { class: "btn", onclick: () => loginDialog() }, "Sign in"));
   }
@@ -131,7 +131,7 @@ function renderToolbar() {
     const chip = (label, active, onclick) => h("button", { class: `chip${active ? " active" : ""}`, onclick }, label);
     filters.append(
       chip("★ Favorites", state.favorite, () => { state.favorite = !state.favorite; loadClips(); }),
-      ...["private", "unlisted", "public"].map((v) =>
+      ...["private", "unlisted", "public"].filter((v) => v !== "public" || state.me.public_library).map((v) =>
         chip(v[0].toUpperCase() + v.slice(1), state.visibility === v, () => { state.visibility = state.visibility === v ? "" : v; loadClips(); })),
       h("button", { class: `chip select-chip${state.selecting ? " active" : ""}`, onclick: () => setSelecting(!state.selecting) }, state.selecting ? "Done selecting" : "Select"));
   }
@@ -171,7 +171,7 @@ function renderBulkbar() {
     h("span", { class: "bulk-sep" }),
     h("button", { class: "btn small", onclick: () => apply({ visibility: "private" }, "Made private:") }, "Private"),
     h("button", { class: "btn small", onclick: () => apply({ visibility: "unlisted" }, "Made unlisted:") }, "Unlisted"),
-    h("button", { class: "btn small", onclick: () => apply({ visibility: "public" }, "Made public:") }, "Public"),
+    state.me.public_library ? h("button", { class: "btn small", onclick: () => apply({ visibility: "public" }, "Made public:") }, "Public") : null,
     h("span", { class: "bulk-sep" }),
     h("button", { class: "btn small", onclick: () => apply({ favorite: true }, "Favorited") }, "★ Favorite"),
     h("button", { class: "btn small", onclick: async () => {
@@ -335,7 +335,11 @@ function show() {
 async function refreshAll() {
   try {
     [state.me, state.games] = await Promise.all([api("/api/me"), api("/api/games")]);
-  } catch { return; }
+  } catch (err) {
+    if (err.status === 401) loginDialog();     // signed out (or the session ended)
+    return;
+  }
+  window.publicLibrary = state.me.public_library;
   if (state.game && state.game !== "none" && !currentGame()) state.game = "";
   renderSidebar();
   renderNotice();
@@ -359,7 +363,6 @@ $("sort").addEventListener("change", (e) => { state.sort = e.target.value; loadC
 (async () => {
   await refreshAll();
   renderTopbar();
-  if (params.has("login") && !state.me.admin) loginDialog();
   // Pick up newly imported clips without a manual reload.
   setInterval(async () => {
     if (document.hidden || document.querySelector("dialog[open]") || state.selecting) return;

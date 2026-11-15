@@ -7,7 +7,9 @@ services:
     ports:
       - "8080:8080"
     environment:
-      # Password for signing in. If left empty, one is generated and printed in the logs.
+      # Your sign-in. If the password is left empty, one is generated and printed in the logs.
+      # Both can be changed later under Settings > Account.
+      ADMIN_USERNAME: "admin"
       ADMIN_PASSWORD: "change-me"
       # Public address of the site, used for share links and Discord embeds.
       # Leave empty to use whatever address the visitor came in on.

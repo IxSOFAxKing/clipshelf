@@ -8,11 +8,12 @@ import os
 import re
 import threading
 import time
+import urllib.parse
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import config, db, games, library, media, settings, sgdb, trim
@@ -33,8 +34,8 @@ async def lifespan(_: FastAPI):
     db.init()
     settings.load()
     if config.PASSWORD_WAS_GENERATED:
-        log.warning("ADMIN_PASSWORD is not set. Generated admin password: %s "
-                    "(saved in %s/admin_password.txt)", config.ADMIN_PASSWORD, config.DATA_DIR)
+        log.warning("ADMIN_PASSWORD is not set. Sign in as '%s' with the generated password: %s "
+                    "(saved in %s/admin_password.txt)", settings.username(), config.ADMIN_PASSWORD, config.DATA_DIR)
     log.info("Watching %s (every %ss); data in %s", config.CLIPS_DIR, settings.get("scan_interval"), config.DATA_DIR)
     scanner.start()
     yield
@@ -73,6 +74,12 @@ def is_admin(request: Request) -> bool:
     return hmac.compare_digest(sig, _sign(int(expires)))
 
 
+def require_library(request: Request) -> None:
+    """Browsing the library needs a sign-in unless the public library is on."""
+    if not settings.get("public_library") and not is_admin(request):
+        raise HTTPException(401, "Sign in required")
+
+
 def require_admin(request: Request) -> None:
     if not is_admin(request):
         raise HTTPException(401, "Sign in required")
@@ -88,20 +95,23 @@ def _start_session(response: Response) -> None:
 _failed_logins: list[float] = []
 
 
-def _check_password(password: str) -> None:
+def _check_password(password: str, username: str | None = None) -> None:
+    """Verify the password (and, at sign-in, the username), with a limit on
+    wrong guesses."""
     now = time.time()
     _failed_logins[:] = [t for t in _failed_logins if now - t < 300]
     if len(_failed_logins) >= 10:
         raise HTTPException(429, "Too many attempts. Try again in a few minutes.")
-    if not settings.check_password(password):
+    ok = settings.check_password(password) if username is None else settings.check_login(username, password)
+    if not ok:
         _failed_logins.append(now)
         time.sleep(0.5)
-        raise HTTPException(401, "Wrong password")
+        raise HTTPException(401, "Wrong password" if username is None else "Wrong username or password")
 
 
 @app.post("/api/login")
 def login(response: Response, body: dict = Body(...)):
-    _check_password(str(body.get("password", "")))
+    _check_password(str(body.get("password", "")), str(body.get("username", "")))
     _start_session(response)
     return {"admin": True}
 
@@ -112,16 +122,23 @@ def logout(response: Response):
     return {"admin": False}
 
 
-@app.post("/api/password")
-def change_password(request: Request, response: Response, body: dict = Body(...)):
+@app.post("/api/account")
+def update_account(request: Request, response: Response, body: dict = Body(...)):
+    """Change the username and/or password (the current password is required)."""
     require_admin(request)
     _check_password(str(body.get("current", "")))
+    name = str(body.get("username", "")).strip()
     new = str(body.get("new", ""))
-    if len(new) < 6:
-        raise HTTPException(400, "Use at least 6 characters")
-    settings.set_password(new)
-    _start_session(response)          # other browsers are signed out
-    return {"ok": True}
+    if name and not re.fullmatch(r"[\w.@+-]{1,40}", name):
+        raise HTTPException(400, "Usernames can use letters, numbers and . _ - @ + (up to 40 characters)")
+    if new and len(new) < 6:
+        raise HTTPException(400, "Use at least 6 characters for the password")
+    if name:
+        settings.set_username(name)
+    if new:
+        settings.set_password(new)
+        _start_session(response)      # other browsers are signed out
+    return {"username": settings.username()}
 
 
 @app.get("/api/me")
@@ -129,7 +146,7 @@ def me(request: Request):
     admin = is_admin(request)
     out = {"admin": admin, **settings.public_values()}
     if admin:
-        out.update(scanner=scanner.status, sgdb=bool(settings.sgdb_key()),
+        out.update(username=settings.username(), scanner=scanner.status, sgdb=bool(settings.sgdb_key()),
                    can_delete_files=os.access(config.CLIPS_DIR, os.W_OK))
     return out
 
@@ -324,6 +341,7 @@ def get_clip(clip_id: str, request: Request):
 def list_clips(request: Request, game: str = "", q: str = "", sort: str = "",
                visibility: str = "", favorite: bool = False, limit: int = 60, offset: int = 0):
     admin = is_admin(request)
+    require_library(request)
     where, args = ["c.missing = 0"], []
     if not admin:
         where.append("c.visibility = 'public' AND NOT (c.processing = 1 AND c.source_path IS NOT NULL)")
@@ -582,6 +600,7 @@ def game_json(row, clips: int | None = None, detail: bool = False) -> dict:
 
 @app.get("/api/games")
 def list_games(request: Request):
+    require_library(request)
     vis = "" if is_admin(request) else " AND c.visibility = 'public'"
     with db.connect() as conn:
         rows = conn.execute(
@@ -805,23 +824,46 @@ def render(name: str, status: int = 200, **values) -> HTMLResponse:
     return HTMLResponse(page, status_code=status, headers={"Cache-Control": "no-store"})
 
 
+def _to_login(request: Request) -> RedirectResponse:
+    target = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+    suffix = "" if target == "/" else "?next=" + urllib.parse.quote(target, safe="")
+    return RedirectResponse("/login" + suffix, status_code=303)
+
+
+def _safe_next(target: str) -> str:
+    """Only ever send people to a page on this site after signing in."""
+    return target if target.startswith("/") and not target.startswith(("//", "/\\")) else "/"
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request, next: str = "/"):
+    if is_admin(request):
+        return RedirectResponse(_safe_next(next), status_code=303)
+    return render("login.html", next_json_raw=json.dumps(_safe_next(next)).replace("</", "<\\/"))
+
+
 @app.get("/", response_class=HTMLResponse)
-def index():
+def index(request: Request):
+    if not settings.get("public_library") and not is_admin(request):
+        return _to_login(request)
     return render("index.html")
 
 
 @app.get("/settings", response_class=HTMLResponse)
-def settings_page():
+def settings_page(request: Request):
+    if not is_admin(request):
+        return _to_login(request)
     return render("settings.html")
 
 
 @app.get("/w/{clip_id}", response_class=HTMLResponse)
 def watch(clip_id: str, request: Request):
+    admin = is_admin(request)
     try:
         row = get_clip(clip_id, request)
     except HTTPException:
-        return render("notfound.html", status=404)
-    admin = is_admin(request)
+        # Private or unknown: visitors are asked to sign in (the two look the same from outside).
+        return render("notfound.html", status=404) if admin else _to_login(request)
     base = base_url(request)
     site = settings.get("site_name")
     game = row["game_name"] or ""

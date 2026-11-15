@@ -80,6 +80,8 @@ SPEC = {
     "default_visibility": (_choice(config.VISIBILITIES), config.DEFAULT_VISIBILITY),
     "allow_download": (_bool, True),
     "show_views": (_bool, True),
+    # Off: the library needs a sign-in and only shared links are open to visitors.
+    "public_library": (_bool, False),
     "scan_interval": (_int(5, 86400), config.SCAN_INTERVAL),
     "steam_lookup": (_bool, config.STEAM_LOOKUP),
     "filename_pattern": (_pattern, config.FILENAME_PATTERN),
@@ -89,7 +91,7 @@ SPEC = {
     "trim_mode": (_choice(("exact", "fast")), "exact"),
 }
 # Sent to every visitor (the rest is admin-only).
-PUBLIC = ("site_name", "default_sort", "group_by_month", "hover_preview", "allow_download", "show_views")
+PUBLIC = ("site_name", "default_sort", "group_by_month", "hover_preview", "allow_download", "show_views", "public_library")
 
 _values: dict = {}
 _internal: dict = {}   # password hash etc.; never sent to the browser
@@ -112,9 +114,10 @@ def load() -> None:
                 pass
         else:
             _internal[row["key"]] = value
-    # Changing ADMIN_PASSWORD in the environment resets a password set in the browser.
-    if _internal.get("password_hash") and _internal.get("password_env") != _fingerprint(config.ADMIN_PASSWORD):
-        _store({"password_hash": None, "password_env": None})
+    # Changing ADMIN_PASSWORD in the environment resets a username/password set in the browser.
+    changed_here = _internal.get("password_hash") or _internal.get("username")
+    if changed_here and _internal.get("password_env") != _fingerprint(config.ADMIN_PASSWORD):
+        _store({"password_hash": None, "password_env": None, "username": None})
 
 
 def get(key: str):
@@ -184,6 +187,20 @@ def _fingerprint(text: str) -> str:
 
 def _hash(password: str, salt: str) -> str:
     return hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), 200_000).hex()
+
+
+def username() -> str:
+    return _internal.get("username") or config.ADMIN_USERNAME
+
+
+def set_username(name: str) -> None:
+    _store({"username": name, "password_env": _fingerprint(config.ADMIN_PASSWORD)})
+
+
+def check_login(name: str, password: str) -> bool:
+    # Evaluate both, so a wrong username takes as long as a wrong password.
+    name_ok = secrets.compare_digest(name.strip().lower().encode(), username().lower().encode())
+    return check_password(password) and name_ok
 
 
 def check_password(password: str) -> bool:

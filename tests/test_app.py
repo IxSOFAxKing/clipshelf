@@ -12,7 +12,7 @@ def site():
     clips, data = Path(os.environ["CLIPS_DIR"]), Path(os.environ["DATA_DIR"])
 
     from fastapi.testclient import TestClient
-    from app import games
+    from app import games, settings
     from app.main import app
     from app.scanner import scanner
 
@@ -45,12 +45,14 @@ def site():
         return path
 
     with TestClient(app) as client:
+        settings.update({"public_library": True})   # most tests check what visitors can browse
         yield {"client": client, "clips": clips, "data": data, "scan": scanner.scan_once, "add": add_clip}
 
 
 def login(client):
     # "secret123" once test_change_password has run
-    assert any(client.post("/api/login", json={"password": pw}).status_code == 200 for pw in ("pw", "secret123"))
+    assert any(client.post("/api/login", json={"username": name, "password": pw}).status_code == 200
+               for name, pw in (("admin", "pw"), ("boss", "secret123")))
 
 
 def test_import_and_visibility(site):
@@ -59,7 +61,8 @@ def test_import_and_visibility(site):
     site["scan"]()
 
     assert c.get("/api/clips").json()["total"] == 0          # private by default
-    assert c.post("/api/login", json={"password": "nope"}).status_code == 401
+    assert c.post("/api/login", json={"username": "admin", "password": "nope"}).status_code == 401
+    assert c.post("/api/login", json={"username": "someone", "password": "pw"}).status_code == 401
     login(c)
     clip = c.get("/api/clips").json()["clips"][0]
     assert clip["game"]["name"] == "Counter-Strike 2"
@@ -69,7 +72,8 @@ def test_import_and_visibility(site):
 
     c.post("/api/logout")
     c.cookies.clear()
-    assert c.get(f"/w/{clip['id']}").status_code == 404
+    private = c.get(f"/w/{clip['id']}", follow_redirects=False)       # visitors are asked to sign in
+    assert private.status_code == 303 and private.headers["location"].startswith("/login?next=%2Fw%2F")
     assert c.get(f"/v/{clip['id']}.mp4").status_code == 404
     assert c.patch(f"/api/clips/{clip['id']}", json={"title": "x"}).status_code == 401
 
@@ -240,15 +244,42 @@ def test_installable(site):
     assert 'rel="manifest"' in c.get("/").text
 
 
-def test_change_password(site):
+def test_login_wall(site):
     c = site["client"]
     login(c)
-    assert c.post("/api/password", json={"current": "wrong", "new": "secret123"}).status_code == 401
-    assert c.post("/api/password", json={"current": "pw", "new": "secret123"}).status_code == 200
+    clips = c.get("/api/clips").json()["clips"]
+    shared = clips[0]["id"]
+    c.patch(f"/api/clips/{shared}", json={"visibility": "unlisted"})
+    assert c.patch("/api/settings", json={"public_library": False}).status_code == 200
+    assert c.get("/", follow_redirects=False).status_code == 200            # signed in
+    assert c.get("/login", follow_redirects=False).headers["location"] == "/"
+    c.cookies.clear()
+
+    home = c.get("/", follow_redirects=False)
+    assert home.status_code == 303 and home.headers["location"] == "/login"
+    assert c.get("/settings", follow_redirects=False).headers["location"] == "/login?next=%2Fsettings"
+    assert c.get("/api/clips").status_code == 401 and c.get("/api/games").status_code == 401
+    page = c.get("/login?next=https://evil.example/")
+    assert page.status_code == 200 and "evil.example" not in page.text and 'autocomplete="username"' in page.text
+    # Shared links still work without signing in.
+    assert c.get(f"/w/{shared}").status_code == 200
+    assert c.get(f"/v/{shared}.mp4", headers={"Range": "bytes=0-9"}).status_code == 206
+    assert c.get(f"/t/{shared}.jpg").status_code == 200
+    login(c)
+    c.patch("/api/settings", json={"public_library": True})
+
+
+def test_change_account(site):
+    c = site["client"]
+    login(c)
+    assert c.post("/api/account", json={"current": "wrong", "new": "secret123"}).status_code == 401
+    assert c.post("/api/account", json={"current": "pw", "username": "bad name!"}).status_code == 400
+    assert c.post("/api/account", json={"current": "pw", "username": "boss", "new": "secret123"}).json()["username"] == "boss"
     assert c.get("/api/settings").status_code == 200           # this browser stays signed in
     c.cookies.clear()
-    assert c.post("/api/login", json={"password": "pw"}).status_code == 401
-    assert c.post("/api/login", json={"password": "secret123"}).status_code == 200
+    assert c.post("/api/login", json={"username": "admin", "password": "secret123"}).status_code == 401
+    assert c.post("/api/login", json={"username": "boss", "password": "pw"}).status_code == 401
+    assert c.post("/api/login", json={"username": "Boss", "password": "secret123"}).status_code == 200
 
 
 def test_steamgriddb_art(site, monkeypatch):
@@ -302,7 +333,7 @@ def test_delete_clips(site):
     assert c.post("/api/clips/delete", json={"ids": [first["id"]]}).json()["deleted"] == 1
     site["scan"]()
     assert path.exists() and c.get("/api/clips").json()["total"] == total - 1
-    assert c.get(f"/w/{first['id']}").status_code == 404
+    assert c.get(f"/w/{first['id']}").status_code == 404           # signed in: a plain "not found"
     assert c.get("/api/stats").json()["removed"] == 1
     assert c.post("/api/maintenance/restore-removed").status_code == 200
     for _ in range(50):

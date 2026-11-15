@@ -134,29 +134,10 @@ function openDialog(build) {
   return dlg;
 }
 
-function loginDialog(onDone) {
-  openDialog((dlg) => {
-    const pw = h("input", { type: "password", autocomplete: "current-password", required: true });
-    const error = h("div", { class: "error" });
-    return h("form", {
-      onsubmit: async (e) => {
-        e.preventDefault();
-        error.textContent = "";
-        try {
-          await api("/api/login", { method: "POST", body: { password: pw.value } });
-          dlg.close();
-          onDone ? onDone() : location.reload();
-        } catch (err) { error.textContent = err.message; pw.select(); }
-      },
-    },
-      h("h2", null, "Sign in"),
-      h("label", { class: "field" }, h("span", null, "Admin password"), pw),
-      error,
-      h("div", { class: "dialog-actions" },
-        h("button", { type: "button", class: "btn ghost", onclick: () => dlg.close() }, "Cancel"),
-        h("button", { class: "btn primary" }, "Sign in")),
-    );
-  });
+// Send the visitor to the sign-in page, coming back to this page afterwards.
+function loginDialog() {
+  const here = location.pathname + location.search;
+  location.href = here === "/" ? "/login" : `/login?next=${encodeURIComponent(here)}`;
 }
 
 const VISIBILITY = [
@@ -217,7 +198,9 @@ function editDialog(clip, onSaved) {
       } catch (err) { results.replaceChildren(h("div", { class: "error" }, err.message)); }
     }
 
-    const seg = h("div", { class: "seg" }, VISIBILITY.map(([value, label, help]) =>
+    // "Public" only means something when visitors can browse the library.
+    const levels = VISIBILITY.filter(([value]) => value !== "public" || window.publicLibrary !== false || clip.visibility === "public");
+    const seg = h("div", { class: `seg${levels.length === 2 ? " two" : ""}` }, levels.map(([value, label, help]) =>
       h("label", null, h("input", { type: "radio", name: "visibility", value, checked: clip.visibility === value }),
         label, h("small", null, help))));
 

@@ -194,27 +194,31 @@ function artworkSources(keySet) {
 function sharing() {
   return section("sharing", "Sharing", null,
     row("Public address", "Used in copied links and Discord previews, e.g. https://clips.example.com. Leave empty to use the address in your browser.", text("base_url", { placeholder: "https://clips.example.com", spellcheck: false })),
+    row("Public library", "Off: the library needs your sign-in, and visitors can only open clips you've shared a link to. On: visitors can also browse every clip marked Public.", toggle("public_library")),
     row("Let visitors download", "Shows a Download button on share pages.", toggle("allow_download")),
     row("Show view counts to visitors", "You always see them.", toggle("show_views")));
 }
 
-function account() {
+function account(username) {
+  const name = h("input", { type: "text", value: username, autocomplete: "username", autocapitalize: "none", spellcheck: false, required: true, maxLength: 40 });
   const current = h("input", { type: "password", autocomplete: "current-password", required: true });
-  const next = h("input", { type: "password", autocomplete: "new-password", required: true, minLength: 6 });
+  const next = h("input", { type: "password", autocomplete: "new-password", minLength: 6, placeholder: "Leave empty to keep it" });
   const error = h("div", { class: "error" });
-  return section("account", "Password", "Changing it signs out every other browser. If you forget it, change ADMIN_PASSWORD in your compose file and restart to reset.",
-    h("form", { class: "pw-form", onsubmit: async (e) => {
+  return section("account", "Account", "Your sign-in for this library. Changing the password signs out every other browser. If you get locked out, change ADMIN_PASSWORD in your compose file and restart: that resets both to the values in the compose file.",
+    h("form", { class: "pw-form account", onsubmit: async (e) => {
       e.preventDefault();
       error.textContent = "";
       try {
-        await api("/api/password", { method: "POST", body: { current: current.value, new: next.value } });
+        const r = await api("/api/account", { method: "POST", body: { username: name.value, current: current.value, new: next.value } });
+        name.value = r.username;
         current.value = next.value = "";
-        toast("Password changed");
+        toast("Account updated");
       } catch (err) { error.textContent = err.message; }
     } },
-      h("label", { class: "field" }, h("span", null, "Current password"), current),
+      h("label", { class: "field" }, h("span", null, "Username"), name),
       h("label", { class: "field" }, h("span", null, "New password"), next),
-      h("button", { class: "btn primary" }, "Change password")), error);
+      h("label", { class: "field" }, h("span", null, "Current password (to confirm)"), current),
+      h("button", { class: "btn primary" }, "Save account")), error);
 }
 
 function fmtBytes(n) {
@@ -272,7 +276,8 @@ function maintenance() {
     return fill(main, h("div", { class: "error" }, err.message));
   }
   values = data.values; defaults = data.defaults;
-  const sections = [appearance(), library(data.clips_dir), filenames(), artworkSources(data.steamgriddb_key_set), sharing(), account(), maintenance()];
+  const me = await api("/api/me");
+  const sections = [appearance(), library(data.clips_dir), filenames(), artworkSources(data.steamgriddb_key_set), sharing(), account(me.username), maintenance()];
   fill(main, sections);
   fill(nav, sections.map((s) => h("a", { href: `#${s.id}` }, s.querySelector("h2").textContent)));
 })();

@@ -10,7 +10,8 @@ function render() {
   document.title = `${clip.title} · ${document.title.split(" · ").pop()}`;
   const meta = h("div", { class: "watch-meta" });
   if (clip.game) {
-    meta.append(h("a", { class: `game-pill${clip.game.cover ? "" : " bare"}`, href: `/?game=${clip.game.id}`, title: "More clips from this game" },
+    const browse = me.admin || me.public_library;    // visitors with only a link can't open the library
+    meta.append(h(browse ? "a" : "span", { class: `game-pill${clip.game.cover ? "" : " bare"}`, href: browse ? `/?game=${clip.game.id}` : null, title: browse ? "More clips from this game" : null },
       clip.game.cover ? h("img", { src: clip.game.cover, alt: "" }) : null, clip.game.name));
   }
   meta.append(h("span", { class: clip.game ? "dot" : "" }, fmtDate(clip.recorded_at, true)));
@@ -52,7 +53,8 @@ function render() {
 
   let note = null;
   if (me.admin) {
-    const vis = { private: "Private: only you can watch this.", unlisted: "Unlisted: anyone with the link can watch.", public: "Public: listed on the home page." };
+    const vis = { private: "Private: only you can watch this.", unlisted: "Unlisted: anyone with the link can watch.",
+      public: me.public_library ? "Public: listed in the library for visitors." : "Public: anyone with the link can watch (the public library is off)." };
     note = h("div", { class: "admin-note" }, vis[clip.visibility]);
     if (clip.processing) note.append(clip.highlight ? " Saving this highlight… the video appears here when it's ready." : " Trimming… this can take a minute for longer clips.");
     else if (clip.highlight) note.append(` Highlight cut from ${clip.filename}.`);
@@ -227,7 +229,9 @@ video.play().catch(() => {});  // autoplay where the browser allows it
 render();
 api("/api/me").then((data) => {
   me = data;
+  window.publicLibrary = me.public_library;
   const bar = document.getElementById("topbar-actions");
+  if (!me.admin && !me.public_library) document.querySelector(".brand").removeAttribute("href");
   bar.append(me.admin ? h("a", { class: "btn ghost", href: "/" }, "Library")
     : h("button", { class: "btn ghost", onclick: () => loginDialog() }, "Sign in"));
   render();
