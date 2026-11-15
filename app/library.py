@@ -2,7 +2,7 @@
 import logging
 from pathlib import Path
 
-from . import config, db, games, media
+from . import config, db, games, media, settings, sgdb
 
 log = logging.getLogger("clipshelf.library")
 SLOTS = {"cover": ("has_cover", 920), "hero": ("has_hero", 1920)}
@@ -80,3 +80,25 @@ def refresh_game(game_id: int, fallback_url: str = "", reset_art: bool = False) 
     _first_image(game_id, "cover", [details and details["header"], classic, fallback_url])
     _first_image(game_id, "hero", details["hero"] if details else [])
     return bool(details)
+
+
+def sgdb_auto_art(game_id: int, name: str) -> bool:
+    """For a game Steam doesn't know, take artwork from SteamGridDB (if a key
+    is set and the name matches a game there). Hand-picked artwork is kept."""
+    if not settings.sgdb_key():
+        return False
+    with db.connect() as conn:
+        row = conn.execute("SELECT art_locked, has_cover FROM games WHERE id = ?", (game_id,)).fetchone()
+    if not row or row["art_locked"] or row["has_cover"]:
+        return False
+    try:
+        match = games.best_match(name, sgdb.search(name))
+        if not match:
+            return False
+        found = False
+        for slot in SLOTS:
+            found = _first_image(game_id, slot, [i["url"] for i in sgdb.images(match["id"], slot)[:3]]) or found
+        return found
+    except sgdb.SgdbError as exc:
+        log.warning("SteamGridDB lookup for '%s' failed: %s", name, exc)
+        return False

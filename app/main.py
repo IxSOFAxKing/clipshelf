@@ -15,7 +15,7 @@ from fastapi import Body, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, db, games, library, media, settings
+from . import config, db, games, library, media, settings, sgdb
 from .scanner import scanner
 
 log = logging.getLogger("clipshelf")
@@ -129,7 +129,8 @@ def me(request: Request):
     admin = is_admin(request)
     out = {"admin": admin, **settings.public_values()}
     if admin:
-        out["scanner"] = scanner.status
+        out.update(scanner=scanner.status, sgdb=bool(settings.sgdb_key()),
+                   can_delete_files=os.access(config.CLIPS_DIR, os.W_OK))
     return out
 
 
@@ -139,6 +140,7 @@ def me(request: Request):
 def get_settings(request: Request):
     require_admin(request)
     return {"values": settings.all_values(),
+            "steamgriddb_key_set": bool(settings.sgdb_key()),
             "defaults": {k: v[1] for k, v in settings.SPEC.items()},
             "clips_dir": str(config.CLIPS_DIR)}
 
@@ -153,6 +155,28 @@ def patch_settings(request: Request, body: dict = Body(...)):
     if "scan_interval" in body or "steam_lookup" in body:
         scanner.trigger()
     return {"values": values}
+
+
+def _retry_unmatched() -> None:
+    with db.connect() as conn:
+        conn.execute("UPDATE games SET lookup_status = 'pending' WHERE lookup_status = 'none'")
+    scanner.trigger()
+
+
+@app.put("/api/settings/steamgriddb-key")
+def set_sgdb_key(request: Request, body: dict = Body(...)):
+    """Save (or, with an empty key, remove) the SteamGridDB API key."""
+    require_admin(request)
+    key = str(body.get("key", "")).strip()
+    if key:
+        try:
+            sgdb.check_key(key)
+        except sgdb.SgdbError as exc:
+            raise HTTPException(400, str(exc))
+    settings.set_sgdb_key(key)
+    if key:
+        _retry_unmatched()        # games Steam doesn't know can now get artwork
+    return {"steamgriddb_key_set": bool(settings.sgdb_key())}
 
 
 @app.post("/api/settings/test-filename")
@@ -180,6 +204,7 @@ def stats(request: Request):
             "COALESCE(SUM(views), 0) AS views, "
             "SUM(visibility = 'private') AS private, SUM(visibility = 'unlisted') AS unlisted, "
             "SUM(visibility = 'public') AS public FROM clips WHERE missing = 0").fetchone()
+        removed = conn.execute("SELECT COUNT(*) FROM clips WHERE missing = 2").fetchone()[0]
         n_games = conn.execute("SELECT COUNT(DISTINCT game_id) FROM clips WHERE missing = 0").fetchone()[0]
         unmatched = conn.execute(
             "SELECT COUNT(*) FROM games WHERE steam_appid IS NULL AND id IN "
@@ -191,7 +216,7 @@ def stats(request: Request):
                 data_bytes += os.path.getsize(os.path.join(root, name))
             except OSError:
                 pass
-    return {**{k: row[k] or 0 for k in row.keys()}, "games": n_games, "unmatched_games": unmatched,
+    return {**{k: row[k] or 0 for k in row.keys()}, "games": n_games, "unmatched_games": unmatched, "removed": removed,
             "data_bytes": data_bytes, "scanner": scanner.status, "unreadable": scanner.unreadable()[:50],
             "clips_dir": str(config.CLIPS_DIR)}
 
@@ -215,7 +240,13 @@ def _regenerate_thumbnails() -> None:
                 conn.execute("UPDATE clips SET thumb_v = thumb_v + 1 WHERE id = ?", (r["id"],))
 
 
-MAINTENANCE = {"rescan": scanner.trigger, "refresh-metadata": _refresh_all_metadata,
+def _restore_removed() -> None:
+    with db.connect() as conn:
+        conn.execute("UPDATE clips SET missing = 0 WHERE missing = 2")
+    scanner.trigger()     # anything whose file has since gone drops out again
+
+
+MAINTENANCE = {"rescan": scanner.trigger, "restore-removed": _restore_removed, "refresh-metadata": _refresh_all_metadata,
                "regenerate-thumbnails": _regenerate_thumbnails}
 
 
@@ -420,6 +451,46 @@ def bulk_update(request: Request, body: dict = Body(...)):
     return {"updated": len(ids)}
 
 
+def _delete_clips(ids: list[str], delete_file: bool) -> int:
+    """Remove clips from the library. With `delete_file`, the video file is
+    deleted too; otherwise it stays on disk and is not imported again."""
+    with db.connect() as conn:
+        marks = ",".join("?" * len(ids))
+        rows = conn.execute(f"SELECT id, path FROM clips WHERE missing = 0 AND id IN ({marks})", ids).fetchall()
+    if delete_file:
+        if not os.access(config.CLIPS_DIR, os.W_OK):
+            raise HTTPException(409, "The clips folder is read-only, so files can't be deleted from here. "
+                                     "Remove ':ro' from the clips volume in your compose file to allow it.")
+        for row in rows:
+            path = config.CLIPS_DIR / row["path"]
+            if config.CLIPS_DIR not in path.resolve().parents:
+                raise HTTPException(400, "Clip is outside the clips folder")
+            try:
+                path.unlink(missing_ok=True)
+            except OSError as exc:
+                raise HTTPException(409, f"Couldn't delete {row['path']}: {exc.strerror or exc}")
+            (config.THUMBS_DIR / f"{row['id']}.jpg").unlink(missing_ok=True)
+            (config.MEDIA_DIR / f"{row['id']}.mp4").unlink(missing_ok=True)
+            with db.connect() as conn:
+                conn.execute("DELETE FROM clips WHERE id = ?", (row["id"],))
+            log.info("Deleted clip file %s", row["path"])
+    else:
+        with db.connect() as conn:
+            conn.executemany("UPDATE clips SET missing = 2 WHERE id = ?", [(r["id"],) for r in rows])
+    with db.connect() as conn:
+        _prune(conn)
+    return len(rows)
+
+
+@app.post("/api/clips/delete")
+def delete_clips(request: Request, body: dict = Body(...)):
+    require_admin(request)
+    ids = [str(i) for i in body.get("ids", [])][:1000]
+    if not ids:
+        raise HTTPException(400, "Nothing to delete")
+    return {"deleted": _delete_clips(ids, bool(body.get("file")))}
+
+
 @app.post("/api/clips/{clip_id}/thumbnail")
 def set_thumbnail(clip_id: str, request: Request, body: dict = Body(...)):
     """Use the frame at `time` seconds as the thumbnail, or reset with time=null."""
@@ -533,10 +604,25 @@ def refresh_game(game_id: int, request: Request, body: dict = Body(default={})):
 
 
 @app.get("/api/games/{game_id}/art")
-def art_choices(game_id: int, request: Request):
-    """Artwork Steam offers for the matched game."""
+def art_choices(game_id: int, request: Request, source: str = "steam", slot: str = "cover", q: str = ""):
+    """Artwork on offer for a game: from Steam (the matched app), or from
+    SteamGridDB (found by Steam app ID, by name, or by the search text `q`)."""
     require_admin(request)
     row = _game_row(game_id)
+    if source == "sgdb":
+        _slot(slot)
+        try:
+            found = None
+            if q.strip():
+                found = (sgdb.search(q.strip()) or [None])[0]
+            elif row["steam_appid"]:
+                found = sgdb.game_for_steam(row["steam_appid"])
+            if not found and not q.strip():
+                found = games.best_match(row["name"], sgdb.search(row["name"]))
+            art = sgdb.images(found["id"], slot) if found else []
+        except sgdb.SgdbError as exc:
+            raise HTTPException(502, str(exc))
+        return {"art": art, "matched": found["name"] if found else None}
     if not row["steam_appid"]:
         return {"art": []}
     try:

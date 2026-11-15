@@ -15,6 +15,11 @@ one a link you can share.
 - **Fix match and artwork**: search Steam by name or app ID to correct a match,
   then pick the cover and background from Steam's artwork and screenshots,
   paste an image address, or upload your own.
+- **SteamGridDB artwork**: with a free API key, games Steam doesn't know
+  (Fortnite, Valorant, ...) get artwork on their own, and the artwork picker
+  gains a SteamGridDB tab with community covers and backgrounds.
+- **Deleting**: remove a clip from the library (the file stays on disk and can
+  be brought back from Settings), or delete the file itself.
 - **Sharing**: every clip is private, unlisted (anyone with the link) or public
   (listed on the home page). Share pages embed as playable video in Discord.
 - **Clip tools**: rename, move between games, favorite, pick any frame as the
@@ -73,6 +78,36 @@ changed in the browser, the browser's value wins.
 | `VIDEO_EXTENSIONS` | `mp4,mkv,mov,webm,m4v` | File types to import (environment only). |
 | `TZ` | UTC | Time zone, used when a clip's date comes from the file rather than its name. |
 
+### SteamGridDB
+
+Sign in at steamgriddb.com, open Preferences > API, copy the key and paste it
+under Settings > Artwork sources. It can also be supplied as the
+`STEAMGRIDDB_API_KEY` environment variable.
+
+### Deleting clips
+
+"Remove from library" always works: the clip disappears and its link stops
+working, but the file is untouched. Removed clips can be restored from
+Settings > Library status.
+
+"Delete file" erases the video from the clips folder. It is only offered when
+the folder is writable, so with the default read-only mount you first need to
+change the volume in `docker-compose.yml` from
+
+```yaml
+- /path/to/your/clips:/clips:ro
+```
+
+to
+
+```yaml
+- /path/to/your/clips:/clips
+```
+
+The container runs as user 1000, which needs write permission on that folder.
+If the folder syncs with your PC (Syncthing, for example), a file deleted here
+may be deleted there too.
+
 ### How the game is worked out
 
 1. `FILENAME_PATTERN`, if set.
@@ -96,7 +131,7 @@ SteamDB has no public API and asks not to be scraped, so names are matched
 against Steam's own store search, which is the same catalogue with the same app
 IDs. The app links to the SteamDB page for each matched game. Games that are
 not on Steam (Fortnite, Valorant, League of Legends) are still grouped by name;
-they just have no cover art.
+they get artwork from SteamGridDB if you add a key, or you can upload your own.
 
 ## Putting it on the internet
 

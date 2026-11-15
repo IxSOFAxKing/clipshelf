@@ -43,6 +43,9 @@ function render() {
   if (me.admin || me.allow_download) {
     actions.append(h("a", { class: "btn", href: `/v/${clip.id}.mp4?download=true` }, icon("download"), "Download"));
   }
+  if (me.admin) {
+    actions.append(h("button", { class: "btn", title: "Delete", "aria-label": "Delete", onclick: () => deleteDialog([clip.id], () => { location.href = "/"; }) }, icon("trash")));
+  }
   actions.append(h("button", { class: "btn primary", onclick: () => me.admin ? shareClip(clip, render)
     : copyText(location.href).then((ok) => toast(ok ? "Link copied" : location.href)) }, icon("link"), "Copy link"));
 

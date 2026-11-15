@@ -406,3 +406,15 @@ input.invalid { border-color: #e5484d !important; }
   .bulkbar { bottom: 8px; }
 }
 body.selecting .toast { bottom: 96px; }
+
+/* ---------- delete, artwork sources ---------- */
+.btn.danger { color: #ff8a8a; border-color: #5a2a2e; }
+.btn.danger:hover { background: #e5484d; border-color: #e5484d; color: #fff; }
+.card-actions button[title=Delete]:hover { background: #e5484d; color: #fff; }
+dialog form > p { color: var(--text); }
+.set-control.wide { width: min(380px, 50%); gap: 8px; align-items: center; }
+.set-control.wide input { flex: 1; min-width: 0; height: 38px; padding: 0 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; outline: none; }
+.set-label a, .hint a { text-decoration: underline; text-underline-offset: 3px; }
+.ok-text { color: var(--ok); font-weight: 600; }
+.art-tab .field > .row > span { font-size: 13px; color: var(--muted); font-weight: 500; }
+@media (max-width: 820px) { .set-control.wide { width: 100%; } }

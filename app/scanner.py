@@ -86,13 +86,13 @@ class Scanner:
                     if not row["missing"]:
                         conn.execute("UPDATE clips SET missing = 1 WHERE id = ?", (row["id"],))
                         log.info("Clip file gone: %s", path)
-                elif row["missing"]:
+                elif row["missing"] == 1:   # 2 = removed from the library by hand; stays hidden
                     conn.execute("UPDATE clips SET missing = 0 WHERE id = ?", (row["id"],))
 
         todo = []
         for path, (size, mtime) in sorted(found.items()):
             row = known.get(path)
-            if row and row["size"] == size and abs(row["mtime"] - mtime) < 2:
+            if row and (row["missing"] == 2 or (row["size"] == size and abs(row["mtime"] - mtime) < 2)):
                 self._pending.pop(path, None)
                 continue
             p = self._pending.get(path)
@@ -144,7 +144,7 @@ class Scanner:
             if not row:
                 # Same file under a new folder/name keeps its ID (and share link).
                 for cand in conn.execute(
-                    "SELECT id, path FROM clips WHERE size = ? AND filename = ?", (size, filename)
+                    "SELECT id, path FROM clips WHERE size = ? AND filename = ? AND missing != 2", (size, filename)
                 ):
                     if not (config.CLIPS_DIR / cand["path"]).exists():
                         moved = cand
@@ -202,7 +202,11 @@ class Scanner:
                 if not match:
                     conn.execute("UPDATE games SET lookup_status = 'none' WHERE id = ? AND lookup_status = 'pending'", (g["id"],))
                     log.info("No Steam match for '%s'", g["name"])
-                    continue
+            if not match:
+                if library.sgdb_auto_art(g["id"], g["name"]):
+                    log.info("Took artwork for '%s' from SteamGridDB", g["name"])
+                continue
+            with db.connect() as conn:
                 conn.execute(
                     "UPDATE games SET steam_appid = ?, steam_name = ?, lookup_status = 'matched' "
                     "WHERE id = ? AND lookup_status = 'pending'",

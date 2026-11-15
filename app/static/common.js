@@ -378,11 +378,13 @@ function gameDialog(game, onChange) {
 
     // ---- artwork tab
     let slot = "cover";
+    let source = game.steam_appid ? "steam" : "sgdb";
+    let sgdbQuery = "";
     function artwork() {
       const SLOTS = { cover: ["Cover", "Shown in the sidebar, the games grid and on share pages."],
         hero: ["Background", "The wide banner behind the game's page."] };
       const current = game[slot];
-      const choices = h("div", { class: "art-grid" }, h("div", { class: "hint" }, game.steam_appid ? "Loading artwork from Steam…" : ""));
+      const choices = h("div", { class: "art-grid" });
       const use = (payload) => run(async () => {
         choices.classList.add("busy");
         try {
@@ -392,33 +394,59 @@ function gameDialog(game, onChange) {
           toast(`${SLOTS[slot][0]} updated`);
         } finally { choices.classList.remove("busy"); render(); }
       });
-      if (game.steam_appid) {
-        api(`/api/games/${game.id}/art`).then((d) => {
-          fill(choices, d.art.length ? d.art.map((a) =>
-            h("button", { type: "button", class: "art-choice", title: `Use ${a.label}`, onclick: () => use(a.url) },
-              h("img", { src: a.thumb, alt: a.label, loading: "lazy", onerror: (e) => e.target.closest("button").remove() }),
-              h("span", null, a.label)))
-            : h("div", { class: "hint" }, "Steam has no artwork for this game."));
-        }).catch((err) => fill(choices, h("div", { class: "error" }, err.message)));
+      const show = (art, empty) => fill(choices, art.length ? art.map((a) =>
+        h("button", { type: "button", class: "art-choice", title: `Use this image (${a.label})`, onclick: () => use(a.url) },
+          h("img", { src: a.thumb, alt: a.label, loading: "lazy", onerror: (e) => e.target.closest("button").remove() }),
+          h("span", null, a.label)))
+        : h("div", { class: "hint" }, empty));
+      const loading = (text) => fill(choices, h("div", { class: "hint" }, text));
+      const failed = (err) => fill(choices, h("div", { class: "error" }, err.message));
+
+      let sgdbSearch = null;
+      if (source === "steam") {
+        if (game.steam_appid) {
+          loading("Loading artwork from Steam…");
+          api(`/api/games/${game.id}/art`).then((d) => show(d.art, "Steam has no artwork for this game.")).catch(failed);
+        } else {
+          loading("This game isn't matched to Steam. Match it on the Details tab, or try SteamGridDB.");
+        }
       } else {
-        fill(choices, h("div", { class: "hint" }, "Match the game to Steam on the Details tab to pick from its artwork, or use your own image below."));
+        const q = h("input", { type: "text", value: sgdbQuery, placeholder: `Search SteamGridDB (default: ${game.name})`, "aria-label": "Search SteamGridDB" });
+        const go = () => { sgdbQuery = q.value.trim(); render(); };
+        q.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); go(); } });
+        sgdbSearch = h("div", { class: "row" }, q, h("button", { type: "button", class: "btn", onclick: go }, "Search"));
+        loading("Loading artwork from SteamGridDB…");
+        api("/api/me").then((me) => {
+          if (!me.sgdb) {
+            sgdbSearch.hidden = true;
+            return fill(choices, h("div", { class: "hint" }, "SteamGridDB has community artwork for almost every game, including ones that aren't on Steam. ",
+              h("a", { href: "/settings#artwork" }, "Add a free API key in Settings"), " to use it."));
+          }
+          return api(`/api/games/${game.id}/art?source=sgdb&slot=${slot}&q=${encodeURIComponent(sgdbQuery)}`).then((d) =>
+            show(d.art, d.matched ? `SteamGridDB has no ${slot === "cover" ? "wide covers" : "backgrounds"} for ${d.matched}.`
+              : "SteamGridDB didn't find this game. Try searching for it by another name."));
+        }).catch(failed);
       }
+
       const url = h("input", { type: "text", placeholder: "https://…/image.jpg", "aria-label": "Image address" });
       const file = h("input", { type: "file", accept: "image/*", hidden: true, onchange: () => file.files[0] && use(file.files[0]) });
+      const chip = (key, label) => h("button", { type: "button", class: `chip${source === key ? " active" : ""}`, onclick: () => { source = key; render(); } }, label);
       return h("div", { class: "art-tab" },
         h("div", { class: "seg two" }, Object.entries(SLOTS).map(([key, [label, help]]) =>
           h("label", null, h("input", { type: "radio", name: "slot", checked: slot === key, onchange: () => { slot = key; render(); } }),
             label, h("small", null, help)))),
         h("div", { class: `art-current ${slot}` }, current ? h("img", { src: current, alt: "" }) : h("span", null, "No image yet")),
-        h("div", { class: "field" }, h("span", null, "Choose from Steam"), choices),
+        h("div", { class: "field" },
+          h("div", { class: "row" }, h("span", null, "Choose from"), chip("steam", "Steam"), chip("sgdb", "SteamGridDB")),
+          sgdbSearch, choices),
         h("div", { class: "field" }, h("span", null, "Or use your own image"),
           h("div", { class: "row" }, url,
             h("button", { type: "button", class: "btn", onclick: () => url.value.trim() ? use(url.value.trim()) : url.focus() }, "Use address"),
             h("button", { type: "button", class: "btn", onclick: () => file.click() }, "Upload…"), file)),
         h("div", { class: "dialog-actions" },
           game.art_locked ? h("button", { type: "button", class: "btn ghost", onclick: () => run(async () => {
-            changed(await api(`/api/games/${game.id}/art`, { method: "DELETE" })); render(); toast("Back to Steam's artwork");
-          }) }, "Reset to Steam artwork") : null,
+            changed(await api(`/api/games/${game.id}/art`, { method: "DELETE" })); render(); toast("Artwork reset");
+          }) }, "Reset to automatic artwork") : null,
           h("div", { class: "spacer" }),
           h("button", { type: "button", class: "btn primary", onclick: () => dlg.close() }, "Done")));
     }
@@ -440,4 +468,43 @@ async function uploadArt(gameId, slot, blob) {
   const data = await res.json().catch(() => null);
   if (!res.ok) throw new Error((data && data.detail) || "Upload failed");
   return data;
+}
+
+ICONS.trash = '<path d="M4 7h16"/><path d="M9 7V4.5h6V7"/><path d="M6.5 7l1 12.5h9l1-12.5"/><path d="M10 11v5M14 11v5"/>';
+
+// Ask how to delete clips, then do it. `onDone()` runs after a successful delete.
+function deleteDialog(ids, onDone) {
+  const many = ids.length !== 1;
+  const what = many ? `${ids.length} clips` : "this clip";
+  openDialog((dlg) => {
+    const error = h("div", { class: "error" });
+    const note = h("div", { class: "hint" });
+    const fileBtn = h("button", { type: "button", class: "btn danger", hidden: true }, many ? "Delete files" : "Delete file");
+    const go = async (file) => {
+      error.textContent = "";
+      try {
+        await api("/api/clips/delete", { method: "POST", body: { ids, file } });
+        dlg.close();
+        toast(file ? `Deleted ${what}` : `Removed ${what} from the library`);
+        onDone?.();
+      } catch (err) { error.textContent = err.message; }
+    };
+    fileBtn.addEventListener("click", () => go(true));
+    api("/api/me").then((me) => {
+      if (me.can_delete_files) {
+        fileBtn.hidden = false;
+        note.textContent = `“Delete ${many ? "files" : "file"}” erases the video from the clips folder for good. If that folder syncs with your PC, it may be deleted there too.`;
+      } else {
+        note.textContent = "The clips folder is mounted read-only, so the video files can't be deleted from here. To allow it, remove “:ro” from the clips volume in your compose file.";
+      }
+    }).catch(() => {});
+    return h("form", { onsubmit: (e) => e.preventDefault() },
+      h("h2", null, `Delete ${what}?`),
+      h("p", null, `“Remove from library” hides ${many ? "them" : "it"} here and turns off ${many ? "their links" : "its link"}, but keeps the video ${many ? "files" : "file"} on disk. You can bring removed clips back from Settings.`),
+      note, error,
+      h("div", { class: "dialog-actions" },
+        h("button", { type: "button", class: "btn ghost", onclick: () => dlg.close() }, "Cancel"),
+        fileBtn,
+        h("button", { type: "button", class: "btn primary", onclick: () => go(false) }, "Remove from library")));
+  });
 }

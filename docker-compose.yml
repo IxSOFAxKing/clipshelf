@@ -14,7 +14,8 @@ services:
       BASE_URL: ""
       TZ: "America/New_York"
     volumes:
-      # The folder your clips land in (read-only: Clipshelf never changes your files).
+      # The folder your clips land in. Read-only by default; remove ":ro" if you want
+      # to be able to delete clip files from the web interface.
       - /path/to/your/clips:/clips:ro
       # Thumbnails, game art and the database.
       - clipshelf-data:/data

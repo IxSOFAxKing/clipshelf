@@ -132,6 +132,38 @@ function filenames() {
   return sec;
 }
 
+function artworkSources(keySet) {
+  const box = h("div", { class: "set-control wide" });
+  function draw() {
+    if (keySet) {
+      return fill(box, h("span", { class: "ok-text" }, "Key saved"),
+        h("button", { class: "btn", onclick: async () => {
+          try { keySet = (await api("/api/settings/steamgriddb-key", { method: "PUT", body: { key: "" } })).steamgriddb_key_set; toast("Key removed"); draw(); }
+          catch (err) { toast(err.message); }
+        } }, "Remove"));
+    }
+    const input = h("input", { type: "password", placeholder: "Paste your API key", autocomplete: "off", "aria-label": "SteamGridDB API key" });
+    const saveKey = async () => {
+      if (!input.value.trim()) return input.focus();
+      try {
+        keySet = (await api("/api/settings/steamgriddb-key", { method: "PUT", body: { key: input.value } })).steamgriddb_key_set;
+        toast("Key saved. Looking for artwork for unmatched games…");
+        draw();
+      } catch (err) { toast(err.message); input.classList.add("invalid"); }
+    };
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") saveKey(); });
+    fill(box, input, h("button", { class: "btn", onclick: saveKey }, "Save"));
+  }
+  draw();
+  return section("artwork", "Artwork sources", "Steam is used automatically for games it knows. SteamGridDB adds community artwork for almost every game, including ones that aren't on Steam.",
+    h("div", { class: "set-row" },
+      h("div", { class: "set-label" }, h("strong", null, "SteamGridDB API key"),
+        h("span", null, "Free. Sign in at steamgriddb.com, open ",
+          h("a", { href: "https://www.steamgriddb.com/profile/preferences/api", target: "_blank", rel: "noopener" }, "Preferences › API"),
+          " and copy the key. With a key saved, games without a Steam match get artwork on their own, and the artwork picker gains a SteamGridDB tab.")),
+      box));
+}
+
 function sharing() {
   return section("sharing", "Sharing", null,
     row("Public address", "Used in copied links and Discord previews, e.g. https://clips.example.com. Leave empty to use the address in your browser.", text("base_url", { placeholder: "https://clips.example.com", spellcheck: false })),
@@ -182,6 +214,11 @@ function maintenance() {
       fill(problems,
         !s.scanner.clips_dir_ok ? h("div", { class: "notice" }, `The clips folder (${s.clips_dir}) isn't available. Check the volume mount.`) : null,
         s.unmatched_games ? h("div", { class: "hint" }, `${s.unmatched_games} ${s.unmatched_games === 1 ? "game has" : "games have"} no Steam match. Open the game and choose Edit game to fix it.`) : null,
+        s.removed ? h("div", { class: "hint removed-row" }, `${s.removed} ${s.removed === 1 ? "clip was" : "clips were"} removed from the library (the files are still on disk). `,
+          h("button", { class: "link", onclick: async () => {
+            try { await api("/api/maintenance/restore-removed", { method: "POST" }); toast("Restoring removed clips…"); setTimeout(load, 2500); }
+            catch (err) { toast(err.message); }
+          } }, "Bring them back")) : null,
         s.unreadable.length ? h("details", { class: "unreadable" }, h("summary", null, `${s.unreadable.length} ${s.unreadable.length === 1 ? "file" : "files"} couldn't be read as video`),
           h("ul", null, s.unreadable.map((p) => h("li", null, p)))) : null);
     } catch (err) { fill(stats, h("div", { class: "error" }, err.message)); }
@@ -208,7 +245,7 @@ function maintenance() {
     return fill(main, h("div", { class: "error" }, err.message));
   }
   values = data.values; defaults = data.defaults;
-  const sections = [appearance(), library(data.clips_dir), filenames(), sharing(), account(), maintenance()];
+  const sections = [appearance(), library(data.clips_dir), filenames(), artworkSources(data.steamgriddb_key_set), sharing(), account(), maintenance()];
   fill(main, sections);
   fill(nav, sections.map((s) => h("a", { href: `#${s.id}` }, s.querySelector("h2").textContent)));
 })();

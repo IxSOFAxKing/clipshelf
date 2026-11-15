@@ -163,6 +163,14 @@ def reset(keys) -> dict:
     return all_values()
 
 
+def sgdb_key() -> str:
+    return _internal.get("steamgriddb_api_key") or config.STEAMGRIDDB_API_KEY
+
+
+def set_sgdb_key(key: str) -> None:
+    _store({"steamgriddb_api_key": key.strip() or None})
+
+
 def ignored_names() -> set[str]:
     return {n.strip().lower() for n in get("ignored_names").split(",") if n.strip()}
 

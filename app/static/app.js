@@ -179,6 +179,10 @@ function renderBulkbar() {
       const pick = await gamePickerDialog(`Move ${n} ${n === 1 ? "clip" : "clips"} to a game`);
       if (pick) apply(pick, "Moved");
     } }, "Set game…"),
+    h("button", { class: "btn small danger", onclick: () => {
+      if (!n) return toast("Pick some clips first");
+      deleteDialog([...state.selected], () => { setSelecting(false); refreshAll(); });
+    } }, "Delete…"),
     h("div", { class: "spacer" }),
     h("button", { class: "btn small primary", onclick: () => setSelecting(false) }, "Done"));
 }
@@ -235,6 +239,7 @@ function clipCard(clip) {
       fav,
       h("button", { title: "Copy share link", "aria-label": "Copy share link", onclick: () => shareClip(clip, replace) }, icon("link")),
       h("button", { title: "Edit", "aria-label": "Edit", onclick: () => editDialog(clip, replace) }, icon("edit")),
+      h("button", { title: "Delete", "aria-label": "Delete", onclick: () => deleteDialog([clip.id], refreshAll) }, icon("trash")),
     );
   }
   const meta = h("div", { class: "meta" });

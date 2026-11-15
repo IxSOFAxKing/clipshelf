@@ -49,7 +49,8 @@ def site():
 
 
 def login(client):
-    assert client.post("/api/login", json={"password": "pw"}).status_code == 200
+    # "secret123" once test_change_password has run
+    assert any(client.post("/api/login", json={"password": pw}).status_code == 200 for pw in ("pw", "secret123"))
 
 
 def test_import_and_visibility(site):
@@ -176,3 +177,71 @@ def test_change_password(site):
     c.cookies.clear()
     assert c.post("/api/login", json={"password": "pw"}).status_code == 401
     assert c.post("/api/login", json={"password": "secret123"}).status_code == 200
+
+
+def test_steamgriddb_art(site, monkeypatch):
+    from app import sgdb
+    c = site["client"]
+    login(c)
+    calls = []
+
+    def fake_call(path, key=None):
+        calls.append(path)
+        if key == "bad":
+            raise sgdb.SgdbError("SteamGridDB didn't accept the API key")
+        if path.startswith("/search/autocomplete/"):
+            return [{"id": 77, "name": "Fortnite"}]
+        if path.startswith("/games/steam/"):
+            return {"id": 5, "name": "Counter-Strike 2"}
+        return [{"url": "https://cdn.test/a.png", "thumb": "https://cdn.test/a_t.png", "author": {"name": "someone"}}]
+    monkeypatch.setattr(sgdb, "_call", fake_call)
+
+    assert c.put("/api/settings/steamgriddb-key", json={"key": "bad"}).status_code == 400
+    assert c.put("/api/settings/steamgriddb-key", json={"key": "good"}).json()["steamgriddb_key_set"]
+    assert c.get("/api/me").json()["sgdb"] is True
+
+    game = next(g for g in c.get("/api/games").json()["games"] if g["steam_appid"] == 730)
+    r = c.get(f"/api/games/{game['id']}/art?source=sgdb&slot=hero").json()
+    assert r["matched"] == "Counter-Strike 2" and r["art"][0]["label"] == "by someone"
+    assert any(p.startswith("/heroes/game/5") for p in calls)
+    assert c.get(f"/api/games/{game['id']}/art?source=sgdb&slot=cover&q=fort").json()["matched"] == "Fortnite"
+
+    # A game Steam doesn't know gets SteamGridDB artwork on its own.
+    from app import games as games_mod
+    monkeypatch.setattr(games_mod, "steam_search", lambda term: [])
+    site["add"]("Fortnite__2026-11-12__10-00-00.mp4")
+    site["scan"]()
+    fortnite = next(g for g in c.get("/api/games").json()["games"] if g["name"] == "Fortnite")
+    assert fortnite["steam_appid"] is None and fortnite["cover"] and fortnite["hero"]
+    assert c.put("/api/settings/steamgriddb-key", json={"key": ""}).json()["steamgriddb_key_set"] is False
+
+
+def test_delete_clips(site):
+    c = site["client"]
+    login(c)
+    path = site["add"]("Fortnite__2026-11-13__10-00-00.mp4")
+    keep = site["add"]("Fortnite__2026-11-14__10-00-00.mp4")
+    site["scan"]()
+    by_file = {x["filename"]: x for x in c.get("/api/clips").json()["clips"]}
+    first, second = by_file[path.name], by_file[keep.name]
+    total = c.get("/api/clips").json()["total"]
+
+    # Remove from library: file stays and is not imported again.
+    assert c.post("/api/clips/delete", json={"ids": [first["id"]]}).json()["deleted"] == 1
+    site["scan"]()
+    assert path.exists() and c.get("/api/clips").json()["total"] == total - 1
+    assert c.get(f"/w/{first['id']}").status_code == 404
+    assert c.get("/api/stats").json()["removed"] == 1
+    assert c.post("/api/maintenance/restore-removed").status_code == 200
+    for _ in range(50):
+        if c.get("/api/clips").json()["total"] == total:
+            break
+        time.sleep(0.1)
+    assert c.get("/api/clips").json()["total"] == total
+
+    # Delete the file itself.
+    assert c.get("/api/me").json()["can_delete_files"] is True
+    assert c.post("/api/clips/delete", json={"ids": [second["id"]], "file": True}).json()["deleted"] == 1
+    assert not keep.exists() and not (site["data"] / "thumbs" / f"{second['id']}.jpg").exists()
+    c.cookies.clear()
+    assert c.post("/api/clips/delete", json={"ids": [first["id"]]}).status_code == 401

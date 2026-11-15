@@ -48,6 +48,9 @@ FOLDER_AS_GAME = _bool("FOLDER_AS_GAME", True)
 # browser. When enabled, a copy with all tracks mixed is kept in DATA_DIR.
 MERGE_AUDIO_TRACKS = _bool("MERGE_AUDIO_TRACKS", True)
 
+# Optional key for extra artwork from steamgriddb.com (can also be set in the browser).
+STEAMGRIDDB_API_KEY = os.environ.get("STEAMGRIDDB_API_KEY", "").strip()
+
 SESSION_DAYS = int(os.environ.get("SESSION_DAYS", "30"))
 SECURE_COOKIES = _bool("SECURE_COOKIES", BASE_URL.startswith("https://"))
 
