@@ -58,6 +58,11 @@ MIGRATIONS = [
     ("games", "art_v", "INTEGER NOT NULL DEFAULT 0"),        # bumps when artwork changes
     ("clips", "thumb_v", "INTEGER NOT NULL DEFAULT 0"),
     ("clips", "thumb_custom", "INTEGER NOT NULL DEFAULT 0"), # thumbnail frame chosen by hand
+    ("clips", "trim_start", "REAL"),                         # seconds into the original file
+    ("clips", "trim_end", "REAL"),
+    ("clips", "orig_duration", "REAL"),                      # length of the file when trimmed
+    ("clips", "processing", "INTEGER NOT NULL DEFAULT 0"),   # a trimmed copy is being made
+    ("clips", "served_vcodec", "TEXT"),                      # codec of the copy in MEDIA_DIR
 ]
 
 
@@ -84,6 +89,7 @@ def init() -> None:
             have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
             if column not in have:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+        conn.execute("UPDATE clips SET processing = 0")   # nothing survives a restart
 
 
 def _key(name: str) -> str:

@@ -86,6 +86,7 @@ SPEC = {
     "folder_as_game": (_bool, config.FOLDER_AS_GAME),
     "ignored_names": (_text(1000), DEFAULT_IGNORED),
     "merge_audio_tracks": (_bool, config.MERGE_AUDIO_TRACKS),
+    "trim_mode": (_choice(("exact", "fast")), "exact"),
 }
 # Sent to every visitor (the rest is admin-only).
 PUBLIC = ("site_name", "default_sort", "group_by_month", "hover_preview", "allow_download", "show_views")

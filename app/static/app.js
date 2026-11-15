@@ -212,7 +212,7 @@ function clipCard(clip) {
     thumb.addEventListener("mouseenter", () => {
       if (state.selecting) return;
       timer = setTimeout(() => {
-        preview = h("video", { src: `/v/${clip.id}.mp4`, muted: true, loop: true, playsInline: true, preload: "auto" });
+        preview = h("video", { src: clip.video, muted: true, loop: true, playsInline: true, preload: "auto" });
         thumb.append(preview);
         preview.play().catch(() => {});
       }, 350);

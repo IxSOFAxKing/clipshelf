@@ -98,6 +98,8 @@ function library(clipsDir) {
     row("Check for new clips every", "Lower is quicker to notice new files; higher is gentler on network shares.", number("scan_interval", 5, 86400, "seconds")),
     row("Match games to Steam", "Looks up new games for artwork, descriptions and SteamDB links.", toggle("steam_lookup")),
     row("Mix separate audio tracks", "Keeps a browser-friendly copy of clips recorded with game and microphone on separate tracks.", toggle("merge_audio_tracks")),
+    row("Trimming", "Exact cuts on the frame you pick and re-encodes the trimmed part, which takes longer. Fast keeps the original quality but the start can shift by a second or two.",
+      select("trim_mode", [["exact", "Exact"], ["fast", "Fast"]])),
     row("New clips start as", "Who can see a clip right after it is imported.",
       select("default_visibility", [["private", "Private"], ["unlisted", "Unlisted"], ["public", "Public"]])));
 }

@@ -168,6 +168,42 @@ def test_game_metadata_art_and_settings(site):
     assert c.get("/api/stats").json()["clips"] == 2
 
 
+def test_trim(site):
+    c = site["client"]
+    login(c)
+    site["add"]("Trimtest__2026-11-01__10-00-00.mp4")
+    site["scan"]()
+    clip = next(x for x in c.get("/api/clips").json()["clips"] if x["filename"].startswith("Trimtest"))
+    assert clip["duration"] == 2.0 and clip["trim_start"] is None
+
+    def wait():
+        for _ in range(100):
+            now = c.get(f"/api/clips/{clip['id']}").json()
+            if not now["processing"]:
+                return now
+            time.sleep(0.1)
+        raise AssertionError("trim never finished")
+
+    assert c.post(f"/api/clips/{clip['id']}/trim", json={"start": 0.5, "end": 0.7}).status_code == 400
+    assert c.post(f"/api/clips/{clip['id']}/trim", json={"start": 0.5, "end": 1.5}).json()["processing"]
+    done = wait()
+    assert (done["trim_start"], done["trim_end"], done["source_duration"]) == (0.5, 1.5, 2.0)
+    assert 0.9 <= done["duration"] <= 1.1 and done["video"] != clip["video"]
+    original = site["clips"] / "Trimtest__2026-11-01__10-00-00.mp4"
+    served = c.get(done["video"]).content
+    assert served != original.read_bytes()                                   # visitors get the cut copy
+    assert c.get(f"/v/{clip['id']}.mp4?original=true").content == original.read_bytes()
+    site["scan"]()                                                           # a rescan leaves the trim alone
+    assert c.get(f"/api/clips/{clip['id']}").json()["trim_start"] == 0.5
+
+    c.post(f"/api/clips/{clip['id']}/trim", json={"start": None})
+    back = wait()
+    assert back["trim_start"] is None and back["duration"] == 2.0
+    assert c.get(back["video"]).content == original.read_bytes()
+    c.cookies.clear()
+    assert c.get(f"/v/{clip['id']}.mp4?original=true").status_code in (401, 404)
+
+
 def test_change_password(site):
     c = site["client"]
     login(c)

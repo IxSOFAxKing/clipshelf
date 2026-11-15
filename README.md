@@ -18,6 +18,9 @@ one a link you can share.
 - **SteamGridDB artwork**: with a free API key, games Steam doesn't know
   (Fortnite, Valorant, ...) get artwork on their own, and the artwork picker
   gains a SteamGridDB tab with community covers and backgrounds.
+- **Trimming**: cut a clip down in the browser by dragging start and end
+  handles. The original file is never changed; the trimmed version is kept in
+  the data folder, and the trim can be adjusted or removed later.
 - **Deleting**: remove a clip from the library (the file stays on disk and can
   be brought back from Settings), or delete the file itself.
 - **Sharing**: every clip is private, unlisted (anyone with the link) or public
@@ -83,6 +86,17 @@ changed in the browser, the browser's value wins.
 Sign in at steamgriddb.com, open Preferences > API, copy the key and paste it
 under Settings > Artwork sources. It can also be supplied as the
 `STEAMGRIDDB_API_KEY` environment variable.
+
+### Trimming
+
+Open a clip and choose Trim. Drag the handles (arrow keys nudge by a tenth of a
+second), preview the selection, then save. Share links, embeds and downloads
+all get the trimmed version.
+
+By default the cut is exact, which re-encodes the trimmed part with ffmpeg and
+can take a while for long clips on a small server. Settings > Library >
+Trimming can be switched to Fast, which keeps the original video data but can
+only start on a keyframe, so the start may shift by a second or two.
 
 ### Deleting clips
 

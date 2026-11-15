@@ -67,23 +67,41 @@ def make_thumbnail(src: Path, dest: Path, duration: float, at: float | None = No
     return False
 
 
-def merge_audio(src: Path, dest: Path, tracks: int) -> bool:
-    """Write a copy with every audio track mixed into one (video untouched)."""
+def render(src: Path, dest: Path, audio_tracks: int, merge: bool,
+           start: float | None = None, end: float | None = None, exact: bool = True) -> bool:
+    """Write the copy of a clip that is served to browsers: optionally cut to
+    start..end (seconds) and/or with all audio tracks mixed into one.
+
+    `exact` re-encodes the video so the cut lands on the chosen frame; without
+    it the video is copied untouched and the cut snaps back to a keyframe."""
     tmp = dest.with_suffix(".tmp.mp4")
-    inputs = "".join(f"[0:a:{i}]" for i in range(tracks))
+    trimming = start is not None or end is not None
+    reencode = trimming and exact
+    cmd = ["ffmpeg", "-v", "error", "-y"]
+    if start is not None:
+        cmd += ["-ss", f"{start:.3f}"]
+    if end is not None:
+        cmd += ["-to", f"{end:.3f}"]
+    cmd += ["-i", str(src)]
+    if merge and audio_tracks > 1:
+        inputs = "".join(f"[0:a:{i}]" for i in range(audio_tracks))
+        cmd += ["-filter_complex", f"{inputs}amix=inputs={audio_tracks}:normalize=0[a]",
+                "-map", "0:v:0", "-map", "[a]", "-c:a", "aac", "-b:a", "192k"]
+    else:
+        cmd += ["-map", "0:v:0", "-map", "0:a:0?"]
+        cmd += ["-c:a", "aac", "-b:a", "192k"] if reencode else ["-c:a", "copy"]
+    if reencode:
+        cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p"]
+    else:
+        cmd += ["-c:v", "copy", "-avoid_negative_ts", "make_zero"]
+    cmd += ["-movflags", "+faststart", str(tmp)]
     try:
-        subprocess.run(
-            ["ffmpeg", "-v", "error", "-y", "-i", str(src),
-             "-filter_complex", f"{inputs}amix=inputs={tracks}:normalize=0[a]",
-             "-map", "0:v:0", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-             "-movflags", "+faststart", str(tmp)],
-            capture_output=True, timeout=1800, check=True,
-        )
+        subprocess.run(cmd, capture_output=True, timeout=3600, check=True)
         tmp.replace(dest)
         return True
     except (subprocess.SubprocessError, OSError) as exc:
         err = getattr(exc, "stderr", b"") or b""
-        log.warning("audio merge failed for %s: %s %s", src, exc, err.decode(errors="replace")[-300:])
+        log.warning("ffmpeg failed for %s: %s %s", src, exc, err.decode(errors="replace")[-300:])
         tmp.unlink(missing_ok=True)
         return False
 

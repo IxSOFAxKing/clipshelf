@@ -155,7 +155,7 @@ class Scanner:
         merged = 0
         merged_path = config.MEDIA_DIR / f"{clip_id}.mp4"
         if settings.get("merge_audio_tracks") and info["audio_tracks"] > 1:
-            merged = int(media.merge_audio(full, merged_path, info["audio_tracks"]))
+            merged = int(media.render(full, merged_path, info["audio_tracks"], merge=True))
         if not merged:
             merged_path.unlink(missing_ok=True)
 
@@ -166,6 +166,7 @@ class Scanner:
                 conn.execute(
                     "UPDATE clips SET path = ?, filename = ?, missing = 0, size = ?, mtime = ?, duration = ?, "
                     "width = ?, height = ?, vcodec = ?, audio_tracks = ?, merged_audio = ?, thumb_custom = 0, "
+                    "trim_start = NULL, trim_end = NULL, orig_duration = NULL, served_vcodec = NULL, "   # file changed: trim no longer applies
                     "thumb_v = thumb_v + 1 WHERE id = ?",
                     (path, filename, *media_cols, clip_id),
                 )

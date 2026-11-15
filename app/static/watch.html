@@ -37,8 +37,9 @@
 </header>
 <main class="watch-main">
   <div class="player" id="player" style="--ar: {{width}} / {{height}}">
-    <video id="video" controls playsinline preload="metadata" poster="/t/{{id_raw}}.jpg?v={{thumb_v}}" src="/v/{{id_raw}}.mp4"></video>
+    <video id="video" controls playsinline preload="metadata" poster="/t/{{id_raw}}.jpg?v={{thumb_v}}" src="/v/{{id_raw}}.mp4?v={{thumb_v}}"></video>
   </div>
+  <div id="trimmer" hidden></div>
   <div id="details"></div>
 </main>
 <script id="clip-data" type="application/json">{{clip_json_raw}}</script>

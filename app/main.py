@@ -15,7 +15,7 @@ from fastapi import Body, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, db, games, library, media, settings, sgdb
+from . import config, db, games, library, media, settings, sgdb, trim
 from .scanner import scanner
 
 log = logging.getLogger("clipshelf")
@@ -233,9 +233,9 @@ def _refresh_all_metadata() -> None:
 
 def _regenerate_thumbnails() -> None:
     with db.connect() as conn:
-        rows = conn.execute("SELECT id, path, duration FROM clips WHERE missing = 0 AND thumb_custom = 0").fetchall()
+        rows = conn.execute("SELECT * FROM clips WHERE missing = 0 AND thumb_custom = 0").fetchall()
     for r in rows:
-        if media.make_thumbnail(config.CLIPS_DIR / r["path"], config.THUMBS_DIR / f"{r['id']}.jpg", r["duration"] or 0):
+        if media.make_thumbnail(trim.served_path(r), config.THUMBS_DIR / f"{r['id']}.jpg", r["duration"] or 0):
             with db.connect() as conn:
                 conn.execute("UPDATE clips SET thumb_v = thumb_v + 1 WHERE id = ?", (r["id"],))
 
@@ -291,8 +291,10 @@ def clip_json(row, admin: bool) -> dict:
         "recorded_at": row["recorded_at"],
         "visibility": row["visibility"],
         "views": row["views"] if admin or settings.get("show_views") else None,
-        "web_playable": (row["vcodec"] or "") in media.WEB_CODECS,
+        "web_playable": (row["served_vcodec"] or row["vcodec"] or "") in media.WEB_CODECS,
         "thumb": f"/t/{row['id']}.jpg?v={row['thumb_v']}",
+        "video": f"/v/{row['id']}.mp4?v={row['thumb_v']}",
+        "processing": bool(row["processing"]),
         "game": None,
     }
     if row["game_id"]:
@@ -301,7 +303,8 @@ def clip_json(row, admin: bool) -> dict:
                        "cover": f"/covers/{row['game_id']}.jpg?v={row['art_v']}" if row["has_cover"] else None}
     if admin:
         out.update(favorite=bool(row["favorite"]), filename=row["path"], size=row["size"],
-                   vcodec=row["vcodec"], audio_tracks=row["audio_tracks"], thumb_custom=bool(row["thumb_custom"]))
+                   vcodec=row["vcodec"], audio_tracks=row["audio_tracks"], thumb_custom=bool(row["thumb_custom"]),
+                   trim_start=row["trim_start"], trim_end=row["trim_end"], source_duration=trim.source_duration(row))
     return out
 
 
@@ -502,11 +505,38 @@ def set_thumbnail(clip_id: str, request: Request, body: dict = Body(...)):
             at = float(at)
         except (TypeError, ValueError):
             raise HTTPException(400, "time must be a number")
-    if not media.make_thumbnail(config.CLIPS_DIR / row["path"], config.THUMBS_DIR / f"{row['id']}.jpg",
+    if not media.make_thumbnail(trim.served_path(row), config.THUMBS_DIR / f"{row['id']}.jpg",
                                 row["duration"] or 0, at):
         raise HTTPException(500, "Couldn't grab that frame")
     with db.connect() as conn:
         conn.execute("UPDATE clips SET thumb_v = thumb_v + 1, thumb_custom = ? WHERE id = ?", (int(at is not None), clip_id))
+    return clip_json(get_clip(clip_id, request), True)
+
+
+@app.post("/api/clips/{clip_id}/trim")
+def trim_clip(clip_id: str, request: Request, body: dict = Body(...)):
+    """Cut the clip to start..end seconds of the original file, or remove the
+    trim with start=null. The work happens in the background; poll the clip
+    until `processing` is false."""
+    require_admin(request)
+    row = get_clip(clip_id, request)
+    if row["processing"]:
+        raise HTTPException(409, "This clip is still being processed")
+    full = trim.source_duration(row)
+    begin, end = body.get("start"), body.get("end")
+    if begin is not None or end is not None:
+        try:
+            begin = max(0.0, float(begin or 0))
+            end = min(full, float(end if end is not None else full))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "start and end must be numbers")
+        if end - begin < trim.MIN_LENGTH:
+            raise HTTPException(400, "The trimmed clip must be at least half a second long")
+        if begin <= 0.05 and end >= full - 0.05:
+            begin = end = None      # the whole clip: same as removing the trim
+    if begin is None and row["trim_start"] is None:
+        return clip_json(row, True)
+    trim.start(clip_id, begin, end)
     return clip_json(get_clip(clip_id, request), True)
 
 
@@ -697,15 +727,15 @@ def steam_search(request: Request, q: str):
 # ----------------------------------------------------------------- media ----
 
 @app.get("/v/{clip_id}")
-def video(clip_id: str, request: Request, download: bool = False):
+def video(clip_id: str, request: Request, download: bool = False, original: bool = False):
     row = get_clip(clip_id.rsplit(".", 1)[0], request)
+    if original:        # the untrimmed file, for the trim editor
+        require_admin(request)
     if download and not settings.get("allow_download") and not is_admin(request):
         raise HTTPException(403, "Downloads are turned off")
-    original = config.CLIPS_DIR / row["path"]
-    path = config.MEDIA_DIR / f"{row['id']}.mp4" if row["merged_audio"] else original
-    if not path.is_file():
-        path = original
-    if not path.is_file() or config.CLIPS_DIR not in original.resolve().parents:
+    source = config.CLIPS_DIR / row["path"]
+    path = source if original else trim.served_path(row)
+    if not path.is_file() or config.CLIPS_DIR not in source.resolve().parents:
         raise HTTPException(404, "Clip file not found")
     kwargs = {"filename": row["filename"]} if download else {}
     return FileResponse(path, media_type=MIME.get(path.suffix.lower(), "video/mp4"),
@@ -786,7 +816,7 @@ def watch(clip_id: str, request: Request):
         title=row["title"],
         description=f"{game} clip on {site}" if game else f"Clip on {site}",
         page_url=f"{base}/w/{row['id']}",
-        video_url=f"{base}/v/{row['id']}.mp4",
+        video_url=f"{base}/v/{row['id']}.mp4?v={row['thumb_v']}",
         thumb_url=f"{base}/t/{row['id']}.jpg?v={row['thumb_v']}",
         width=row["width"] or 1280,
         height=row["height"] or 720,
