@@ -16,6 +16,7 @@ DATA_DIR = Path(os.environ.get("DATA_DIR", "/data")).resolve()
 THUMBS_DIR = DATA_DIR / "thumbs"
 COVERS_DIR = DATA_DIR / "covers"
 MEDIA_DIR = DATA_DIR / "media"
+ICONS_DIR = DATA_DIR / "icons"
 DB_PATH = DATA_DIR / "clipshelf.db"
 
 SITE_NAME = os.environ.get("SITE_NAME", "Clipshelf")
@@ -62,7 +63,7 @@ SECRET_KEY = b""
 def init() -> None:
     """Create data directories and load (or create) persistent secrets."""
     global ADMIN_PASSWORD, PASSWORD_WAS_GENERATED, SECRET_KEY
-    for d in (DATA_DIR, THUMBS_DIR, COVERS_DIR, MEDIA_DIR):
+    for d in (DATA_DIR, THUMBS_DIR, COVERS_DIR, MEDIA_DIR, ICONS_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
     key_file = DATA_DIR / "secret.key"

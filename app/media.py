@@ -127,3 +127,24 @@ def image_to_jpeg(blob: bytes, dest: Path, max_width: int) -> bool:
     finally:
         src.unlink(missing_ok=True)
         tmp.unlink(missing_ok=True)
+
+
+def make_icon(dest: Path, size: int, background: str, foreground: str) -> bool:
+    """Draw the app icon (a play triangle on the accent colour) as a PNG."""
+    def rgb(color):
+        return [int(color[i:i + 2], 16) for i in (1, 3, 5)]
+    inside = "gte(X,0.40*W)*lte(abs(Y-0.5*H),(0.72*W-X)*0.70)"
+    channels = ":".join(f"{c}='if({inside},{f},{b})'" for c, f, b in zip("rgb", rgb(foreground), rgb(background)))
+    tmp = dest.with_suffix(".tmp.png")
+    try:
+        subprocess.run(
+            ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=black:s=1024x1024", "-frames:v", "1",
+             "-vf", f"format=rgb24,geq={channels},scale={size}:{size}:flags=lanczos", str(tmp)],
+            capture_output=True, timeout=60, check=True,
+        )
+        tmp.replace(dest)
+        return True
+    except (subprocess.SubprocessError, OSError) as exc:
+        log.warning("Couldn't draw the app icon: %s", exc)
+        tmp.unlink(missing_ok=True)
+        return False

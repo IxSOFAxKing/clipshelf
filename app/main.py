@@ -302,7 +302,8 @@ def clip_json(row, admin: bool) -> dict:
                        "steam_name": row["steam_name"],
                        "cover": f"/covers/{row['game_id']}.jpg?v={row['art_v']}" if row["has_cover"] else None}
     if admin:
-        out.update(favorite=bool(row["favorite"]), filename=row["path"], size=row["size"],
+        out.update(favorite=bool(row["favorite"]), filename=row["source_path"] or row["path"], size=row["size"],
+                   highlight=bool(row["source_path"]),
                    vcodec=row["vcodec"], audio_tracks=row["audio_tracks"], thumb_custom=bool(row["thumb_custom"]),
                    trim_start=row["trim_start"], trim_end=row["trim_end"], source_duration=trim.source_duration(row))
     return out
@@ -314,6 +315,8 @@ def get_clip(clip_id: str, request: Request):
         row = conn.execute(CLIP_SELECT + " WHERE c.id = ? AND c.missing = 0", (clip_id,)).fetchone()
     if not row or (row["visibility"] == "private" and not is_admin(request)):
         raise HTTPException(404, "Clip not found")
+    if row["processing"] and row["source_path"] and not is_admin(request):
+        raise HTTPException(404, "Clip not found")     # a highlight that is still being cut
     return row
 
 
@@ -323,7 +326,7 @@ def list_clips(request: Request, game: str = "", q: str = "", sort: str = "",
     admin = is_admin(request)
     where, args = ["c.missing = 0"], []
     if not admin:
-        where.append("c.visibility = 'public'")
+        where.append("c.visibility = 'public' AND NOT (c.processing = 1 AND c.source_path IS NOT NULL)")
     elif visibility in config.VISIBILITIES:
         where.append("c.visibility = ?")
         args.append(visibility)
@@ -459,19 +462,21 @@ def _delete_clips(ids: list[str], delete_file: bool) -> int:
     deleted too; otherwise it stays on disk and is not imported again."""
     with db.connect() as conn:
         marks = ",".join("?" * len(ids))
-        rows = conn.execute(f"SELECT id, path FROM clips WHERE missing = 0 AND id IN ({marks})", ids).fetchall()
+        rows = conn.execute(f"SELECT id, path, source_path FROM clips WHERE missing = 0 AND id IN ({marks})", ids).fetchall()
     if delete_file:
-        if not os.access(config.CLIPS_DIR, os.W_OK):
+        # Highlights only have a copy in the data folder, which can always be deleted.
+        if any(not r["source_path"] for r in rows) and not os.access(config.CLIPS_DIR, os.W_OK):
             raise HTTPException(409, "The clips folder is read-only, so files can't be deleted from here. "
                                      "Remove ':ro' from the clips volume in your compose file to allow it.")
         for row in rows:
             path = config.CLIPS_DIR / row["path"]
-            if config.CLIPS_DIR not in path.resolve().parents:
-                raise HTTPException(400, "Clip is outside the clips folder")
-            try:
-                path.unlink(missing_ok=True)
-            except OSError as exc:
-                raise HTTPException(409, f"Couldn't delete {row['path']}: {exc.strerror or exc}")
+            if not row["source_path"]:      # a highlight's recording belongs to the clip it came from
+                if config.CLIPS_DIR not in path.resolve().parents:
+                    raise HTTPException(400, "Clip is outside the clips folder")
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError as exc:
+                    raise HTTPException(409, f"Couldn't delete {row['path']}: {exc.strerror or exc}")
             (config.THUMBS_DIR / f"{row['id']}.jpg").unlink(missing_ok=True)
             (config.MEDIA_DIR / f"{row['id']}.mp4").unlink(missing_ok=True)
             with db.connect() as conn:
@@ -516,8 +521,9 @@ def set_thumbnail(clip_id: str, request: Request, body: dict = Body(...)):
 @app.post("/api/clips/{clip_id}/trim")
 def trim_clip(clip_id: str, request: Request, body: dict = Body(...)):
     """Cut the clip to start..end seconds of the original file, or remove the
-    trim with start=null. The work happens in the background; poll the clip
-    until `processing` is false."""
+    trim with start=null. With as_new, the cut becomes a separate clip (a
+    highlight) and this one is left alone. The work happens in the
+    background; poll the returned clip until `processing` is false."""
     require_admin(request)
     row = get_clip(clip_id, request)
     if row["processing"]:
@@ -534,6 +540,15 @@ def trim_clip(clip_id: str, request: Request, body: dict = Body(...)):
             raise HTTPException(400, "The trimmed clip must be at least half a second long")
         if begin <= 0.05 and end >= full - 0.05:
             begin = end = None      # the whole clip: same as removing the trim
+    if not trim.source_file(row).is_file():
+        raise HTTPException(409, "The original recording is no longer in the clips folder")
+    if body.get("as_new"):
+        if begin is None:
+            raise HTTPException(400, "Pick a part of the clip to save as a new clip")
+        title = " ".join(str(body.get("title") or "").split())[:200] or f"{row['title']} (highlight)"
+        return clip_json(get_clip(trim.create_highlight(row, begin, end, title), request), True)
+    if begin is None and row["source_path"]:
+        raise HTTPException(400, "A highlight can't be un-trimmed; open the clip it was cut from instead")
     if begin is None and row["trim_start"] is None:
         return clip_json(row, True)
     trim.start(clip_id, begin, end)
@@ -733,7 +748,7 @@ def video(clip_id: str, request: Request, download: bool = False, original: bool
         require_admin(request)
     if download and not settings.get("allow_download") and not is_admin(request):
         raise HTTPException(403, "Downloads are turned off")
-    source = config.CLIPS_DIR / row["path"]
+    source = trim.source_file(row)
     path = source if original else trim.served_path(row)
     if not path.is_file() or config.CLIPS_DIR not in source.resolve().parents:
         raise HTTPException(404, "Clip file not found")
@@ -825,6 +840,46 @@ def watch(clip_id: str, request: Request):
         id_raw=row["id"],
         thumb_v=row["thumb_v"],
     )
+
+
+# ------------------------------------------------------- installable app ----
+
+@app.get("/manifest.webmanifest")
+def manifest():
+    name = settings.get("site_name")
+    v = settings.get("accent").lstrip("#")
+    icon = lambda size, purpose: {"src": f"/icons/{size}.png?v={v}", "sizes": f"{size}x{size}",
+                                  "type": "image/png", "purpose": purpose}
+    return JSONResponse({
+        "name": name, "short_name": name[:12], "id": "/", "start_url": "/", "scope": "/",
+        "display": "standalone", "background_color": "#0d0f14", "theme_color": "#0d0f14",
+        "icons": [icon(192, "any"), icon(512, "any"), icon(512, "maskable")],
+        "shortcuts": [{"name": "Games", "url": "/?view=games"}],
+    }, media_type="application/manifest+json", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/icons/{size}.png")
+def app_icon(size: int):
+    if size not in (180, 192, 512):
+        raise HTTPException(404)
+    accent = settings.get("accent")
+    path = config.ICONS_DIR / f"{accent.lstrip('#')}-{size}.png"
+    if not path.is_file() and not media.make_icon(path, size, accent, _ink(accent)):
+        raise HTTPException(404)
+    return FileResponse(path, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/icon.svg")
+def icon_svg():
+    accent = settings.get("accent")
+    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" '
+           f'fill="{accent}"/><path d="M12.5 9.5v13l10-6.5z" fill="{_ink(accent)}"/></svg>')
+    return Response(svg, media_type="image/svg+xml", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/sw.js")
+def service_worker():
+    return FileResponse(STATIC / "sw.js", media_type="text/javascript", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/healthz")

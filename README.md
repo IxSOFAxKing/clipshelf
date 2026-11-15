@@ -21,6 +21,10 @@ one a link you can share.
 - **Trimming**: cut a clip down in the browser by dragging start and end
   handles. The original file is never changed; the trimmed version is kept in
   the data folder, and the trim can be adjusted or removed later.
+- **Highlights**: save a trimmed selection as a new clip with its own link,
+  leaving the full clip as it is.
+- **Installable**: add it to your phone's home screen or install it on a
+  desktop as an app; on phones, sharing uses the system share sheet.
 - **Deleting**: remove a clip from the library (the file stays on disk and can
   be brought back from Settings), or delete the file itself.
 - **Sharing**: every clip is private, unlisted (anyone with the link) or public
@@ -93,6 +97,10 @@ Open a clip and choose Trim. Drag the handles (arrow keys nudge by a tenth of a
 second), preview the selection, then save. Share links, embeds and downloads
 all get the trimmed version.
 
+"Save as new clip" keeps the clip you are looking at unchanged and adds the
+selection as a separate clip (a highlight). Highlights live in the data folder,
+so they stay available even if the recording they came from is later deleted.
+
 By default the cut is exact, which re-encodes the trimmed part with ffmpeg and
 can take a while for long clips on a small server. Settings > Library >
 Trimming can be switched to Fast, which keeps the original video data but can
@@ -146,6 +154,17 @@ against Steam's own store search, which is the same catalogue with the same app
 IDs. The app links to the SteamDB page for each matched game. Games that are
 not on Steam (Fortnite, Valorant, League of Legends) are still grouped by name;
 they get artwork from SteamGridDB if you add a key, or you can upload your own.
+
+## Installing as an app
+
+- **iPhone and iPad**: open the site in Safari, tap Share, then "Add to Home
+  Screen".
+- **Android and desktop (Chrome, Edge)**: Settings > Appearance > Install, or
+  the browser menu's "Install app".
+
+Android and desktop browsers only offer installing when the site is opened
+over HTTPS, so this needs the reverse proxy setup below. The app icon follows
+your accent colour.
 
 ## Putting it on the internet
 

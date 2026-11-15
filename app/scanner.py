@@ -80,7 +80,9 @@ class Scanner:
         now = time.time()
 
         with db.connect() as conn:
-            known = {r["path"]: r for r in conn.execute("SELECT id, path, size, mtime, missing FROM clips")}
+            # Highlights have their own file in the data folder, so they don't follow the scan.
+            known = {r["path"]: r for r in conn.execute(
+                "SELECT id, path, size, mtime, missing FROM clips WHERE source_path IS NULL")}
             for path, row in known.items():
                 if path not in found:
                     if not row["missing"]:
@@ -144,7 +146,7 @@ class Scanner:
             if not row:
                 # Same file under a new folder/name keeps its ID (and share link).
                 for cand in conn.execute(
-                    "SELECT id, path FROM clips WHERE size = ? AND filename = ? AND missing != 2", (size, filename)
+                    "SELECT id, path FROM clips WHERE size = ? AND filename = ? AND missing != 2 AND source_path IS NULL", (size, filename)
                 ):
                     if not (config.CLIPS_DIR / cand["path"]).exists():
                         moved = cand
@@ -170,6 +172,9 @@ class Scanner:
                     "thumb_v = thumb_v + 1 WHERE id = ?",
                     (path, filename, *media_cols, clip_id),
                 )
+                if moved:   # highlights cut from this file follow it
+                    conn.execute("UPDATE clips SET source_path = ?, path = ? || '#' || id WHERE source_path = ?",
+                                 (path, path, moved["path"]))
                 log.info("%s clip %s", "Moved" if moved else "Updated", path)
                 return True
             game, when = games.parse_clip_path(path)

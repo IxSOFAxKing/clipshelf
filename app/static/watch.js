@@ -54,7 +54,8 @@ function render() {
   if (me.admin) {
     const vis = { private: "Private: only you can watch this.", unlisted: "Unlisted: anyone with the link can watch.", public: "Public: listed on the home page." };
     note = h("div", { class: "admin-note" }, vis[clip.visibility]);
-    if (clip.processing) note.append(" Trimming… this can take a minute for longer clips.");
+    if (clip.processing) note.append(clip.highlight ? " Saving this highlight… the video appears here when it's ready." : " Trimming… this can take a minute for longer clips.");
+    else if (clip.highlight) note.append(` Highlight cut from ${clip.filename}.`);
     else if (clip.trim_start != null) note.append(` Trimmed to ${fmtPrecise(clip.trim_end - clip.trim_start)} of ${fmtPrecise(clip.source_duration)}; the original file is untouched.`);
     if (clip.thumb_custom) note.append(" Custom thumbnail. ", h("button", { class: "link", onclick: () => setThumb(null) }, "Reset"));
     if (!clip.web_playable) note.append(` This clip uses the ${(clip.vcodec || "unknown").toUpperCase()} codec, which many browsers can't play. Recording in H.264 avoids that.`);
@@ -154,6 +155,28 @@ function openTrimmer() {
     } catch (err) { error.textContent = err.message; }
   };
 
+  // Save the selection as its own clip; this one stays as it is.
+  function saveAsNew() {
+    if (start <= 0.05 && end >= full - 0.05) { error.textContent = "Select part of the clip first."; return; }
+    openDialog((dlg) => {
+      const title = h("input", { type: "text", value: `${clip.title} (highlight)`, maxLength: 200, required: true });
+      const err = h("div", { class: "error" });
+      return h("form", { onsubmit: async (e) => {
+        e.preventDefault();
+        try {
+          const made = await api(`/api/clips/${clip.id}/trim`, { method: "POST", body: { start, end, as_new: true, title: title.value } });
+          location.href = `/w/${made.id}`;
+        } catch (ex) { err.textContent = ex.message; }
+      } },
+        h("h2", null, "Save as new clip"),
+        h("p", { class: "hint" }, `Saves the selected ${fmtPrecise(end - start)} as a separate clip with its own link. This clip stays as it is.`),
+        h("label", { class: "field" }, h("span", null, "Title"), title), err,
+        h("div", { class: "dialog-actions" },
+          h("button", { type: "button", class: "btn ghost", onclick: () => dlg.close() }, "Cancel"),
+          h("button", { class: "btn primary" }, "Save clip")));
+    });
+  }
+
   fill(trimmer,
     h("div", { class: "trim-top" }, h("strong", null, "Trim clip"),
       h("span", { class: "hint" }, "Drag the handles, or play to the spot and use the buttons. The original file is never changed.")),
@@ -163,8 +186,9 @@ function openTrimmer() {
       h("button", { type: "button", class: "btn", onclick: () => { end = clamp(video.currentTime, start + MIN, full); draw(); } }, "End here"),
       playBtn,
       h("div", { class: "spacer" }),
-      clip.trim_start != null ? h("button", { type: "button", class: "btn ghost", onclick: () => save({ start: null }) }, "Remove trim") : null,
+      clip.trim_start != null && !clip.highlight ? h("button", { type: "button", class: "btn ghost", onclick: () => save({ start: null }) }, "Remove trim") : null,
       h("button", { type: "button", class: "btn ghost", onclick: () => closeTrimmer() }, "Cancel"),
+      h("button", { type: "button", class: "btn", title: "Keep this clip as it is and save the selection as a separate clip", onclick: saveAsNew }, "Save as new clip"),
       h("button", { type: "button", class: "btn primary", onclick: () => save({ start, end }) }, "Save trim")),
     error);
   trimmer.hidden = false;
@@ -177,11 +201,16 @@ async function waitForTrim(wanted) {
   for (;;) {
     await new Promise((r) => setTimeout(r, 1500));
     let now;
-    try { now = await api(`/api/clips/${clip.id}`); } catch { continue; }
+    try { now = await api(`/api/clips/${clip.id}`); }
+    catch (err) {
+      if (err.status !== 404) continue;
+      toast("Saving this clip failed; the container log has details.");   // a failed highlight is dropped
+      return setTimeout(() => { location.href = "/"; }, 2500);
+    }
     if (now.processing) continue;
     clip = now;
     const applied = wanted == null ? clip.trim_start == null : clip.trim_start != null && Math.abs(clip.trim_start - wanted) < 0.01;
-    toast(applied ? (wanted == null ? "Trim removed" : "Clip trimmed") : "Trimming failed. The clip is unchanged; the container log has details.");
+    toast(applied ? (wanted == null ? "Trim removed" : clip.highlight && !clip.views && document.referrer.includes("/w/") ? "New clip saved" : "Clip trimmed") : "Trimming failed. The clip is unchanged; the container log has details.");
     if (!closeTrimmer) { video.src = clip.video; video.poster = clip.thumb; }
     return render();
   }

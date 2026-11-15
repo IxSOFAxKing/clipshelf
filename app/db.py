@@ -63,6 +63,8 @@ MIGRATIONS = [
     ("clips", "orig_duration", "REAL"),                      # length of the file when trimmed
     ("clips", "processing", "INTEGER NOT NULL DEFAULT 0"),   # a trimmed copy is being made
     ("clips", "served_vcodec", "TEXT"),                      # codec of the copy in MEDIA_DIR
+    # Highlights: clips cut from another clip's file. `path` is then "<source_path>#<id>".
+    ("clips", "source_path", "TEXT"),
 ]
 
 

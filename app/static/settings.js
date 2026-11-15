@@ -90,7 +90,32 @@ function appearance() {
     row("Default sort", "How clips are ordered when you open the library.",
       select("default_sort", [["newest", "Newest first"], ["oldest", "Oldest first"], ["views", "Most viewed"], ["longest", "Longest"], ["title", "Title A–Z"]])),
     row("Group clips by month", "Adds month headings when sorting by date.", toggle("group_by_month")),
-    row("Preview on hover", "Plays a muted preview when the mouse rests on a clip.", toggle("hover_preview")));
+    row("Preview on hover", "Plays a muted preview when the mouse rests on a clip.", toggle("hover_preview")),
+    installRow());
+}
+
+function installRow() {
+  const control = h("div", { class: "install" });
+  const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+  function draw() {
+    if (standalone) return fill(control, h("span", { class: "ok-text" }, "Installed"));
+    if (installPrompt) {
+      return fill(control, h("button", { class: "btn primary", onclick: async () => {
+        installPrompt.prompt();
+        const choice = await installPrompt.userChoice.catch(() => null);
+        installPrompt = null;
+        if (choice && choice.outcome === "accepted") toast("Installed");
+        draw();
+      } }, "Install"));
+    }
+    const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    fill(control, h("span", { class: "hint" }, ios ? "In Safari, tap Share, then “Add to Home Screen”."
+      : location.protocol === "https:" || ["localhost", "127.0.0.1"].includes(location.hostname) ? "Use your browser's menu: “Install app” or “Add to Home screen”."
+      : "Browsers only offer installing over HTTPS. Open the site through its https:// address, then come back here."));
+  }
+  window.addEventListener("installable", draw);
+  draw();
+  return row("Install as an app", "Puts the library on your home screen or desktop with its own icon and window.", control);
 }
 
 function library(clipsDir) {

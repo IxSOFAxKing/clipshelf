@@ -204,6 +204,42 @@ def test_trim(site):
     assert c.get(f"/v/{clip['id']}.mp4?original=true").status_code in (401, 404)
 
 
+def test_highlight_as_new_clip(site):
+    c = site["client"]
+    login(c)
+    parent = next(x for x in c.get("/api/clips").json()["clips"] if x["filename"].startswith("Trimtest"))
+    total = c.get("/api/clips").json()["total"]
+    new = c.post(f"/api/clips/{parent['id']}/trim", json={"start": 0.2, "end": 1.2, "as_new": True, "title": "Best bit"}).json()
+    assert new["id"] != parent["id"] and new["highlight"] and new["title"] == "Best bit"
+    for _ in range(100):
+        new = c.get(f"/api/clips/{new['id']}").json()
+        if not new["processing"]:
+            break
+        time.sleep(0.1)
+    assert 0.9 <= new["duration"] <= 1.1 and new["game"]["name"] == "Trimtest"
+    assert c.get(f"/api/clips/{parent['id']}").json()["duration"] == 2.0      # the full clip is untouched
+    site["scan"]()
+    assert c.get("/api/clips").json()["total"] == total + 1                    # survives a rescan
+    original = site["clips"] / "Trimtest__2026-11-01__10-00-00.mp4"
+    assert c.get(new["video"]).content != original.read_bytes()
+    assert c.post(f"/api/clips/{new['id']}/trim", json={"start": None}).status_code == 400
+
+    # Deleting the highlight's file never touches the recording it came from.
+    assert c.post("/api/clips/delete", json={"ids": [new["id"]], "file": True}).json()["deleted"] == 1
+    assert original.exists() and c.get("/api/clips").json()["total"] == total
+
+
+def test_installable(site):
+    c = site["client"]
+    manifest = c.get("/manifest.webmanifest").json()
+    assert manifest["display"] == "standalone" and len(manifest["icons"]) == 3
+    icon = c.get(manifest["icons"][0]["src"])
+    assert icon.status_code == 200 and icon.content[:8] == b"\x89PNG\r\n\x1a\n"
+    assert c.get("/icons/64.png").status_code == 404
+    assert c.get("/sw.js").status_code == 200 and "<svg" in c.get("/icon.svg").text
+    assert 'rel="manifest"' in c.get("/").text
+
+
 def test_change_password(site):
     c = site["client"]
     login(c)

@@ -111,6 +111,14 @@ async function shareClip(clip, onChange) {
       made = true;
       onChange?.(clip);
     }
+    // On phones and tablets, hand the link to the system share sheet.
+    if (navigator.share && matchMedia("(hover: none)").matches) {
+      try {
+        await navigator.share({ title: clip.title, url: clipUrl(clip) });
+        if (made) toast("Clip is now unlisted");
+        return;
+      } catch (err) { if (err.name === "AbortError") return; }   // otherwise fall back to copying
+    }
     const ok = await copyText(clipUrl(clip));
     toast(ok ? (made ? "Link copied. Clip is now unlisted." : "Link copied") : clipUrl(clip));
   } catch (e) { toast(e.message); }
@@ -508,3 +516,13 @@ function deleteDialog(ids, onDone) {
         h("button", { type: "button", class: "btn primary", onclick: () => go(false) }, "Remove from library")));
   });
 }
+
+// ---- installable app ----
+// The browser offers its install prompt through this event; Settings has the button.
+let installPrompt = null;
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  installPrompt = e;
+  window.dispatchEvent(new Event("installable"));
+});
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});

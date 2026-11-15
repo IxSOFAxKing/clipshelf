@@ -447,3 +447,10 @@ dialog form > p { color: var(--text); }
 .trim-readout strong { color: var(--text); }
 .trim-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 @media (max-width: 820px) { #trimmer { margin: 12px 12px 0; } }
+
+/* ---------- installed app ---------- */
+.install { text-align: right; }
+.bulkbar { bottom: calc(18px + env(safe-area-inset-bottom, 0px)); }
+.toast { bottom: calc(26px + env(safe-area-inset-bottom, 0px)); }
+@media (display-mode: standalone) { .topbar { padding-top: env(safe-area-inset-top, 0px); height: calc(58px + env(safe-area-inset-top, 0px)); } }
+@media (max-width: 820px) { .install { text-align: left; } }
