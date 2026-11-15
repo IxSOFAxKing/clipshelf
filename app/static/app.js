@@ -1,119 +1,212 @@
-// Library page: game sidebar, filters and the clip grid.
+// Library page: sidebar, game pages, the clip grid and bulk editing.
 "use strict";
 
 const PAGE = 60;
+const SORT_LABELS = { newest: "Newest", oldest: "Oldest", views: "Most viewed", longest: "Longest", title: "Title A–Z" };
 const params = new URLSearchParams(location.search);
 const state = {
   me: { admin: false },
   games: { games: [], uncategorized: 0, total: 0 },
+  view: params.get("view") === "games" ? "games" : "clips",
   game: params.get("game") || "",
   q: params.get("q") || "",
-  sort: params.get("sort") || "newest",
+  sort: params.get("sort") || "",       // "" = the default from Settings
   visibility: "",
   favorite: false,
   clips: [],
   total: 0,
+  selecting: false,
+  selected: new Set(),
 };
 const $ = (id) => document.getElementById(id);
+const sortNow = () => state.sort || state.me.default_sort || "newest";
 let loadToken = 0;
 
 function syncUrl() {
   const p = new URLSearchParams();
+  if (state.view === "games") p.set("view", "games");
   if (state.game) p.set("game", state.game);
   if (state.q) p.set("q", state.q);
-  if (state.sort !== "newest") p.set("sort", state.sort);
+  if (state.sort) p.set("sort", state.sort);
   history.replaceState(null, "", p.size ? `?${p}` : location.pathname);
 }
 
-function setGame(id) {
-  state.game = String(id || "");
+function go(view, game = "") {
+  state.view = view;
+  state.game = String(game || "");
+  if (view === "games") { state.q = ""; $("search").value = ""; }
   document.body.classList.remove("nav-open");
+  setSelecting(false);
   renderSidebar();
-  loadClips();
+  show();
   window.scrollTo({ top: 0 });
 }
 
 // ---------------------------------------------------------------- top bar ----
 
 function renderTopbar() {
-  const bar = $("topbar-actions");
-  bar.replaceChildren();
   if (state.me.admin) {
-    bar.append(
-      h("button", { class: "btn", title: "Check the clips folder for new files now", onclick: async (e) => {
-        e.currentTarget.disabled = true;
+    fill($("topbar-actions"),
+      h("button", { class: "icon-btn", title: "Check the clips folder for new files now", "aria-label": "Scan for new clips", onclick: async () => {
         await api("/api/rescan", { method: "POST" }).catch((err) => toast(err.message));
         toast("Scanning the clips folder…");
         setTimeout(refreshAll, 2500);
-        setTimeout(() => { refreshAll(); renderTopbar(); }, 9000);
-      } }, icon("refresh"), h("span", { class: "label-wide" }, "Rescan")),
-      h("button", { class: "btn ghost", onclick: async () => { await api("/api/logout", { method: "POST" }); location.reload(); } }, "Sign out"),
-    );
+        setTimeout(refreshAll, 9000);
+      } }, icon("refresh")),
+      h("a", { class: "icon-btn", href: "/settings", title: "Settings", "aria-label": "Settings" }, icon("settings")),
+      h("button", { class: "btn ghost", onclick: async () => { await api("/api/logout", { method: "POST" }); location.reload(); } }, "Sign out"));
   } else {
-    bar.append(h("button", { class: "btn", onclick: () => loginDialog() }, "Sign in"));
+    fill($("topbar-actions"), h("button", { class: "btn", onclick: () => loginDialog() }, "Sign in"));
   }
 }
 
 // ---------------------------------------------------------------- sidebar ----
 
 function gameArt(g) {
-  if (g && g.has_cover) return h("img", { class: "game-art", src: `/covers/${g.id}.jpg`, alt: "", loading: "lazy" });
+  if (g && g.cover) return h("img", { class: "game-art", src: g.cover, alt: "", loading: "lazy" });
   return h("span", { class: "game-art" }, g ? g.name.slice(0, 2).toUpperCase() : "");
 }
 
 function renderSidebar() {
   const { games, uncategorized, total } = state.games;
-  const link = (id, label, n, art) =>
-    h("button", { class: `game-link${state.game === String(id) ? " active" : ""}`, onclick: () => setGame(id) },
-      art, h("span", { class: "name" }, label), h("span", { class: "n" }, n));
+  const link = (active, label, n, art, onclick) =>
+    h("button", { class: `game-link${active ? " active" : ""}`, onclick }, art, h("span", { class: "name" }, label),
+      n == null ? null : h("span", { class: "n" }, n));
+  const clipsView = state.view === "clips";
   fill($("sidebar"),
-    link("", "All clips", total),
+    link(clipsView && !state.game, "All clips", total, h("span", { class: "nav-icon" }, icon("film")), () => go("clips")),
+    games.length ? link(!clipsView, "Games", games.length, h("span", { class: "nav-icon" }, icon("grid")), () => go("games")) : null,
     games.length ? h("div", { class: "side-label" }, "Games") : null,
-    ...games.map((g) => link(g.id, g.name, g.clips, gameArt(g))),
-    uncategorized && games.length ? link("none", "No game", uncategorized, gameArt(null)) : null,
+    ...games.map((g) => link(clipsView && state.game === String(g.id), g.name, g.clips, gameArt(g), () => go("clips", g.id))),
+    uncategorized && games.length ? link(clipsView && state.game === "none", "No game", uncategorized, gameArt(null), () => go("clips", "none")) : null,
   );
 }
 
-// ------------------------------------------------------------------- grid ----
+// ------------------------------------------------------------ game banner ----
 
-function currentGame() {
-  return state.games.games.find((g) => String(g.id) === state.game);
+const currentGame = () => state.games.games.find((g) => String(g.id) === state.game);
+
+function renderHero() {
+  const g = state.view === "clips" && !state.q ? currentGame() : null;
+  const hero = $("hero");
+  if (!g) return hero.replaceChildren();
+  const facts = [g.release_date, g.developer, g.genres].filter(Boolean);
+  const banner = h("section", { class: `game-hero${g.hero ? " has-art" : ""}` },
+    g.hero ? h("img", { class: "game-hero-bg", src: g.hero, alt: "" }) : null,
+    h("div", { class: "game-hero-body" },
+      g.cover ? h("img", { class: "game-hero-cover", src: g.cover, alt: "" }) : null,
+      h("div", { class: "game-hero-text" },
+        h("h1", null, g.name),
+        facts.length ? h("div", { class: "facts" }, facts.join("  ·  ")) : null,
+        g.description ? h("p", null, g.description) : null,
+        h("div", { class: "game-hero-actions" },
+          state.me.admin ? h("button", { class: "btn", onclick: () => gameDialog(g, onGameChanged) }, icon("edit"), "Edit game") : null,
+          state.me.admin && !g.steam_appid ? h("span", { class: "hint" }, "No Steam match yet. Edit the game to add artwork and details.") : null,
+          g.steam_appid ? h("a", { class: "btn ghost", href: `https://steamdb.info/app/${g.steam_appid}/`, target: "_blank", rel: "noopener" }, "SteamDB ↗") : null,
+          g.steam_appid ? h("a", { class: "btn ghost", href: `https://store.steampowered.com/app/${g.steam_appid}/`, target: "_blank", rel: "noopener" }, "Steam ↗") : null))));
+  fill(hero, banner);
 }
+
+async function onGameChanged(g) {
+  if (String(g.id) !== state.game) state.game = String(g.id);   // renamed into another game
+  await refreshAll();
+}
+
+// ---------------------------------------------------------------- toolbar ----
 
 function renderToolbar() {
   const g = currentGame();
-  const heading = $("heading");
-  heading.replaceChildren(state.q ? `Results for “${state.q}”` : g ? g.name : state.game === "none" ? "No game" : "All clips");
-  $("count").textContent = state.total ? `${state.total} ${state.total === 1 ? "clip" : "clips"}` : "";
-  $("sort").value = state.sort;
+  const games = state.view === "games";
+  $("heading").textContent = games ? "Games" : state.q ? `Results for “${state.q}”` : g ? "Clips" : state.game === "none" ? "No game" : "All clips";
+  const n = games ? state.games.games.length : state.total;
+  $("count").textContent = n ? `${n} ${games ? (n === 1 ? "game" : "games") : (n === 1 ? "clip" : "clips")}` : "";
+  const sort = $("sort");
+  sort.hidden = games;
+  if (!sort.options.length) sort.append(...Object.entries(SORT_LABELS).map(([value, label]) => h("option", { value }, label)));
+  sort.value = sortNow();
 
   const filters = $("filters");
   filters.replaceChildren();
-  if (g && g.steam_appid) {
-    filters.append(h("a", { class: "chip", href: `https://steamdb.info/app/${g.steam_appid}/`, target: "_blank", rel: "noopener", title: g.steam_name || "" }, "SteamDB ↗"));
-  }
-  if (state.me.admin) {
+  if (state.me.admin && !games) {
     const chip = (label, active, onclick) => h("button", { class: `chip${active ? " active" : ""}`, onclick }, label);
     filters.append(
       chip("★ Favorites", state.favorite, () => { state.favorite = !state.favorite; loadClips(); }),
       ...["private", "unlisted", "public"].map((v) =>
         chip(v[0].toUpperCase() + v.slice(1), state.visibility === v, () => { state.visibility = state.visibility === v ? "" : v; loadClips(); })),
-    );
+      h("button", { class: `chip select-chip${state.selecting ? " active" : ""}`, onclick: () => setSelecting(!state.selecting) }, state.selecting ? "Done selecting" : "Select"));
   }
 }
+
+// ------------------------------------------------------------ bulk select ----
+
+function setSelecting(on) {
+  state.selecting = on;
+  state.selected.clear();
+  document.body.classList.toggle("selecting", on);
+  document.querySelectorAll(".card.selected").forEach((c) => c.classList.remove("selected"));
+  renderBulkbar();
+  if ($("heading").textContent) renderToolbar();
+}
+
+function renderBulkbar() {
+  const bar = $("bulkbar");
+  bar.hidden = !state.selecting;
+  if (!state.selecting) return;
+  const n = state.selected.size;
+  const apply = async (body, done) => {
+    if (!n) return toast("Pick some clips first");
+    try {
+      await api("/api/clips/bulk", { method: "POST", body: { ids: [...state.selected], ...body } });
+      toast(`${done} ${n} ${n === 1 ? "clip" : "clips"}`);
+      setSelecting(false);
+      await refreshAll();
+    } catch (e) { toast(e.message); }
+  };
+  fill(bar,
+    h("strong", null, n ? `${n} selected` : "Select clips"),
+    h("button", { class: "btn small", onclick: () => {
+      document.querySelectorAll(".card[data-id]").forEach((c) => { state.selected.add(c.dataset.id); c.classList.add("selected"); });
+      renderBulkbar();
+    } }, "Select all shown"),
+    h("span", { class: "bulk-sep" }),
+    h("button", { class: "btn small", onclick: () => apply({ visibility: "private" }, "Made private:") }, "Private"),
+    h("button", { class: "btn small", onclick: () => apply({ visibility: "unlisted" }, "Made unlisted:") }, "Unlisted"),
+    h("button", { class: "btn small", onclick: () => apply({ visibility: "public" }, "Made public:") }, "Public"),
+    h("span", { class: "bulk-sep" }),
+    h("button", { class: "btn small", onclick: () => apply({ favorite: true }, "Favorited") }, "★ Favorite"),
+    h("button", { class: "btn small", onclick: async () => {
+      if (!n) return toast("Pick some clips first");
+      const pick = await gamePickerDialog(`Move ${n} ${n === 1 ? "clip" : "clips"} to a game`);
+      if (pick) apply(pick, "Moved");
+    } }, "Set game…"),
+    h("div", { class: "spacer" }),
+    h("button", { class: "btn small primary", onclick: () => setSelecting(false) }, "Done"));
+}
+
+// ------------------------------------------------------------------- grid ----
 
 function clipCard(clip) {
   const href = `/w/${clip.id}`;
   const thumb = h("a", { class: "thumb", href, "aria-label": clip.title },
-    h("img", { src: `/t/${clip.id}.jpg`, alt: "", loading: "lazy", onerror: (e) => e.target.remove() }),
+    h("img", { src: clip.thumb, alt: "", loading: "lazy", onerror: (e) => e.target.remove() }),
     h("span", { class: "badge dur" }, fmtDuration(clip.duration)),
     state.me.admin ? h("span", { class: `badge vis ${clip.visibility}` }, clip.visibility[0].toUpperCase() + clip.visibility.slice(1)) : null,
+    h("span", { class: "tick" }, icon("check")),
   );
+  const card = h("article", { class: `card${state.selected.has(clip.id) ? " selected" : ""}`, "data-id": clip.id });
+  card.addEventListener("click", (e) => {
+    if (!state.selecting) return;
+    e.preventDefault();
+    state.selected.has(clip.id) ? state.selected.delete(clip.id) : state.selected.add(clip.id);
+    card.classList.toggle("selected", state.selected.has(clip.id));
+    renderBulkbar();
+  }, true);
 
   // Muted preview while hovering (desktop only).
   let timer, preview;
-  if (matchMedia("(hover: hover)").matches && clip.web_playable) {
+  if (state.me.hover_preview && matchMedia("(hover: hover)").matches && clip.web_playable) {
     thumb.addEventListener("mouseenter", () => {
+      if (state.selecting) return;
       timer = setTimeout(() => {
         preview = h("video", { src: `/v/${clip.id}.mp4`, muted: true, loop: true, playsInline: true, preload: "auto" });
         thumb.append(preview);
@@ -126,7 +219,6 @@ function clipCard(clip) {
     });
   }
 
-  const card = h("article", { class: "card" });
   const replace = (updated, gameChanged) => {
     Object.assign(clip, updated);
     card.replaceWith(clipCard(clip));
@@ -145,13 +237,35 @@ function clipCard(clip) {
       h("button", { title: "Edit", "aria-label": "Edit", onclick: () => editDialog(clip, replace) }, icon("edit")),
     );
   }
-  const wrap = h("div", { style: "position:relative" }, thumb, actions);
   const meta = h("div", { class: "meta" });
-  if (clip.game && !state.game) meta.append(h("button", { onclick: () => setGame(clip.game.id) }, clip.game.name), " · ");
+  if (clip.game && !state.game) meta.append(h("button", { onclick: () => go("clips", clip.game.id) }, clip.game.name), " · ");
   meta.append(fmtDate(clip.recorded_at));
   if (clip.views) meta.append(` · ${fmtViews(clip.views)}`);
-  card.append(wrap, h("div", { class: "card-body" }, h("a", { class: "card-title", href }, clip.title), meta));
+  card.append(h("div", { class: "thumb-wrap" }, thumb, actions),
+    h("div", { class: "card-body" }, h("a", { class: "card-title", href }, clip.title), meta));
   return card;
+}
+
+const monthOf = (iso) => new Date(iso).toLocaleDateString(undefined, { month: "long", year: "numeric" });
+
+function appendClips(clips) {
+  const grid = $("grid");
+  const grouped = state.me.group_by_month && ["newest", "oldest"].includes(sortNow());
+  for (const clip of clips) {
+    const month = grouped ? monthOf(clip.recorded_at) : null;
+    if (month && month !== grid.dataset.month) {
+      grid.dataset.month = month;
+      grid.append(h("h2", { class: "month" }, month));
+    }
+    grid.append(clipCard(clip));
+  }
+}
+
+function gameCard(g) {
+  return h("button", { class: "game-card", onclick: () => go("clips", g.id) },
+    h("span", { class: "game-card-art" }, g.cover ? h("img", { src: g.cover, alt: "", loading: "lazy" }) : h("span", null, g.name)),
+    h("span", { class: "game-card-name" }, g.name),
+    h("span", { class: "meta" }, `${g.clips} ${g.clips === 1 ? "clip" : "clips"} · latest ${fmtDate(g.latest).toLowerCase()}`));
 }
 
 function renderNotice() {
@@ -177,7 +291,7 @@ function renderEmpty() {
 async function loadClips(append = false) {
   const token = ++loadToken;
   syncUrl();
-  const p = new URLSearchParams({ sort: state.sort, limit: PAGE, offset: append ? state.clips.length : 0 });
+  const p = new URLSearchParams({ sort: sortNow(), limit: PAGE, offset: append ? state.clips.length : 0 });
   if (state.game) p.set("game", state.game);
   if (state.q) p.set("q", state.q);
   if (state.visibility) p.set("visibility", state.visibility);
@@ -188,12 +302,28 @@ async function loadClips(append = false) {
   state.total = data.total;
   state.clips = append ? state.clips.concat(data.clips) : data.clips;
   const grid = $("grid");
-  if (!append) grid.replaceChildren();
-  grid.append(...data.clips.map(clipCard));
-  if (!state.clips.length) grid.replaceChildren();
-  $("more").replaceChildren(
+  grid.className = "grid";
+  if (!append) { grid.replaceChildren(); delete grid.dataset.month; }
+  appendClips(data.clips);
+  fill($("more"),
     !state.clips.length ? renderEmpty()
-      : state.clips.length < state.total ? h("button", { class: "btn", onclick: () => loadClips(true) }, "Show more") : "");
+      : state.clips.length < state.total ? h("button", { class: "btn", onclick: () => loadClips(true) }, "Show more") : null);
+  renderHero();
+  renderToolbar();
+}
+
+// Show whichever view is current.
+function show() {
+  if (state.view !== "games") return loadClips();
+  ++loadToken;
+  syncUrl();
+  const grid = $("grid");
+  grid.className = "grid games-grid";
+  delete grid.dataset.month;
+  const games = [...state.games.games].sort((a, b) => (b.latest || "").localeCompare(a.latest || ""));
+  fill(grid, games.map(gameCard));
+  fill($("more"), games.length ? null : renderEmpty());
+  renderHero();
   renderToolbar();
 }
 
@@ -204,7 +334,7 @@ async function refreshAll() {
   if (state.game && state.game !== "none" && !currentGame()) state.game = "";
   renderSidebar();
   renderNotice();
-  await loadClips();
+  await show();
 }
 
 // ------------------------------------------------------------------- init ----
@@ -217,7 +347,7 @@ $("search").value = state.q;
 let searchTimer;
 $("search").addEventListener("input", (e) => {
   clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => { state.q = e.target.value.trim(); loadClips(); }, 220);
+  searchTimer = setTimeout(() => { state.q = e.target.value.trim(); if (state.q) state.view = "clips"; renderSidebar(); show(); }, 220);
 });
 $("sort").addEventListener("change", (e) => { state.sort = e.target.value; loadClips(); });
 
@@ -227,13 +357,13 @@ $("sort").addEventListener("change", (e) => { state.sort = e.target.value; loadC
   if (params.has("login") && !state.me.admin) loginDialog();
   // Pick up newly imported clips without a manual reload.
   setInterval(async () => {
-    if (document.hidden || document.querySelector("dialog[open]")) return;
+    if (document.hidden || document.querySelector("dialog[open]") || state.selecting) return;
     try {
       const [me, games] = await Promise.all([api("/api/me"), api("/api/games")]);
       const changed = JSON.stringify(games) !== JSON.stringify(state.games);
       state.me = me; state.games = games;
       renderNotice();
-      if (changed) { renderSidebar(); if (state.clips.length <= PAGE && window.scrollY < 200) loadClips(); }
+      if (changed) { renderSidebar(); if (state.clips.length <= PAGE && window.scrollY < 200) show(); }
     } catch { /* offline; try again next tick */ }
   }, 15000);
 })();

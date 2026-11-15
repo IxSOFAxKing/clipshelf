@@ -47,9 +47,10 @@ def probe(path: Path) -> dict | None:
     }
 
 
-def make_thumbnail(src: Path, dest: Path, duration: float) -> bool:
-    """Grab a frame a little way into the clip as a 640px-wide JPEG."""
-    for at in (min(duration * 0.35, max(duration - 0.5, 0)), 0):
+def make_thumbnail(src: Path, dest: Path, duration: float, at: float | None = None) -> bool:
+    """Grab a frame as a 640px-wide JPEG: at `at` seconds, or a little way in."""
+    times = (min(duration * 0.35, max(duration - 0.5, 0)), 0) if at is None else (max(0.0, min(at, duration)),)
+    for at in times:
         tmp = dest.with_suffix(".tmp.jpg")
         try:
             subprocess.run(
@@ -85,3 +86,26 @@ def merge_audio(src: Path, dest: Path, tracks: int) -> bool:
         log.warning("audio merge failed for %s: %s %s", src, exc, err.decode(errors="replace")[-300:])
         tmp.unlink(missing_ok=True)
         return False
+
+
+def image_to_jpeg(blob: bytes, dest: Path, max_width: int) -> bool:
+    """Convert any image ffmpeg can read (JPEG, PNG, WebP, ...) to a JPEG no
+    wider than `max_width`. Returns False if the data isn't an image."""
+    src = dest.with_suffix(".upload")
+    tmp = dest.with_suffix(".tmp.jpg")
+    try:
+        src.write_bytes(blob)
+        subprocess.run(
+            ["ffmpeg", "-v", "error", "-y", "-i", str(src), "-frames:v", "1",
+             "-vf", f"scale='min({max_width},iw)':-2", "-q:v", "3", str(tmp)],
+            capture_output=True, timeout=60, check=True,
+        )
+        if tmp.stat().st_size == 0:
+            return False
+        tmp.replace(dest)
+        return True
+    except (subprocess.SubprocessError, OSError):
+        return False
+    finally:
+        src.unlink(missing_ok=True)
+        tmp.unlink(missing_ok=True)

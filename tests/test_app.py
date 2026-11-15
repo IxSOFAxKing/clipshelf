@@ -16,12 +16,23 @@ def site():
     from app.main import app
     from app.scanner import scanner
 
+    jpeg = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=460x215", "-frames:v", "1",
+                           "-f", "mjpeg", "-"], capture_output=True, check=True).stdout
+
     def fake_get(url, timeout=15):
         if "storesearch" in url:
             return json.dumps({"items": [{"type": "app", "id": 730, "name": "Counter-Strike 2", "tiny_image": "x"}]}).encode()
         if "appdetails" in url:
-            return json.dumps({"730": {"data": {"name": "Counter-Strike 2", "header_image": "x"}}}).encode()
-        return b"\xff\xd8" + b"0" * 2000
+            appid = url.split("appids=")[1].split("&")[0]
+            return json.dumps({appid: {"data": {
+                "name": "Counter-Strike 2", "short_description": "A <b>tactical</b> shooter.",
+                "header_image": "https://img.test/apps/730/header.jpg?t=1", "background_raw": "https://img.test/bg.jpg",
+                "developers": ["Valve"], "genres": [{"description": "Action"}], "release_date": {"date": "Aug 21, 2012"},
+                "screenshots": [{"path_thumbnail": "https://img.test/s1t.jpg", "path_full": "https://img.test/s1.jpg"}],
+            }}}).encode()
+        return jpeg
+    games._get = fake_get
+    games.download_image = lambda url, limit=0: jpeg
     games._get = fake_get
 
     def add_clip(name, age=600):
@@ -116,3 +127,52 @@ def test_regroup_game(site):
     assert (game["name"], game["steam_appid"]) == ("Halo Infinite", 1240440)
     assert c.patch(f"/api/clips/{clip['id']}", json={"game": ""}).json()["game"] is None
     assert c.get("/api/games").json()["games"] == []        # empty games are pruned
+
+
+def test_game_metadata_art_and_settings(site):
+    c = site["client"]
+    login(c)
+    site["add"]("Counter-Strike-2__2026-11-11__10-00-00.mp4")
+    site["scan"]()
+    game = next(g for g in c.get("/api/games").json()["games"] if g["steam_appid"] == 730)
+    assert game["name"] == "Counter-Strike 2"                 # Steam's spelling, not "Counter Strike 2"
+    assert c.get(f"/api/clips?game={game['id']}").json()["clips"][0]["title"].startswith("Counter-Strike 2 · ")
+    assert game["description"] == "A tactical shooter." and game["developer"] == "Valve"
+    assert game["cover"] and game["hero"] and not game["art_locked"]
+    assert c.get(game["cover"]).status_code == 200
+
+    labels = [a["label"] for a in c.get(f"/api/games/{game['id']}/art").json()["art"]]
+    assert labels[:2] == ["Header", "Capsule"] and "Screenshot 1" in labels
+    picked = c.post(f"/api/games/{game['id']}/art/hero", json={"url": "https://img.test/s1.jpg"}).json()
+    assert picked["art_locked"] and picked["hero"] != game["hero"]
+    assert c.put(f"/api/games/{game['id']}/art/cover", content=b"not an image").status_code == 400
+    assert not c.delete(f"/api/games/{game['id']}/art").json()["art_locked"]
+
+    clip = c.get(f"/api/clips?game={game['id']}").json()["clips"][0]
+    custom = c.post(f"/api/clips/{clip['id']}/thumbnail", json={"time": 1.2}).json()
+    assert custom["thumb_custom"] and custom["thumb"] != clip["thumb"]
+    assert c.post("/api/clips/bulk", json={"ids": [clip["id"]], "visibility": "public"}).json()["updated"] == 1
+
+    assert c.patch("/api/settings", json={"accent": "blue"}).status_code == 400
+    assert c.patch("/api/settings", json={"filename_pattern": "("}).status_code == 400
+    r = c.patch("/api/settings", json={"site_name": "My Clips", "accent": "#3366ff", "show_views": False})
+    assert r.json()["values"]["site_name"] == "My Clips"
+    assert "My Clips" in c.get("/").text and "#3366ff" in c.get("/").text
+    c.cookies.clear()
+    assert c.get("/api/settings").status_code == 401
+    assert c.get(f"/api/clips/{clip['id']}").json()["views"] is None
+    test = {"filename": "2026-01-02 03-04-05 - Halo.mp4", "pattern": r"^(?P<date>[\d-]+) (?P<time>[\d-]+) - (?P<game>.+)$"}
+    login(c)
+    assert c.post("/api/settings/test-filename", json=test).json()["game"] == "Halo"
+    assert c.get("/api/stats").json()["clips"] == 2
+
+
+def test_change_password(site):
+    c = site["client"]
+    login(c)
+    assert c.post("/api/password", json={"current": "wrong", "new": "secret123"}).status_code == 401
+    assert c.post("/api/password", json={"current": "pw", "new": "secret123"}).status_code == 200
+    assert c.get("/api/settings").status_code == 200           # this browser stays signed in
+    c.cookies.clear()
+    assert c.post("/api/login", json={"password": "pw"}).status_code == 401
+    assert c.post("/api/login", json={"password": "secret123"}).status_code == 200

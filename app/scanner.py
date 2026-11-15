@@ -8,7 +8,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from . import config, db, games, media
+from . import config, db, games, library, media, settings
 
 log = logging.getLogger("clipshelf.scanner")
 
@@ -28,6 +28,9 @@ class Scanner:
     def start(self) -> None:
         threading.Thread(target=self._run, name="scanner", daemon=True).start()
 
+    def unreadable(self) -> list[str]:
+        return sorted(path for path, p in self._pending.items() if p["fails"] >= 5)
+
     def trigger(self) -> None:
         self._steam_retry_at = 0.0
         self._wake.set()
@@ -39,7 +42,7 @@ class Scanner:
             except Exception:
                 log.exception("scan failed")
             waiting = any(p["fails"] < 5 for p in self._pending.values())
-            self._wake.wait(SETTLE_SECONDS + 1 if waiting else config.SCAN_INTERVAL)
+            self._wake.wait(SETTLE_SECONDS + 1 if waiting else settings.get("scan_interval"))
             self._wake.clear()
 
     # ------------------------------------------------------------ scan ----
@@ -120,11 +123,11 @@ class Scanner:
         self.status["pending"] = sum(1 for p in self._pending.values() if p["fails"] < 5)
         self.status["unreadable"] = sum(1 for p in self._pending.values() if p["fails"] >= 5)
 
-        if config.STEAM_LOOKUP and time.time() >= self._steam_retry_at:
+        if settings.get("steam_lookup") and time.time() >= self._steam_retry_at:
             self._lookup_pending_games()
         with db.connect() as conn:
             for gid in db.prune_empty_games(conn):
-                (config.COVERS_DIR / f"{gid}.jpg").unlink(missing_ok=True)
+                library.remove_art_files(gid)
 
     # ---------------------------------------------------------- ingest ----
 
@@ -151,7 +154,7 @@ class Scanner:
         media.make_thumbnail(full, config.THUMBS_DIR / f"{clip_id}.jpg", info["duration"])
         merged = 0
         merged_path = config.MEDIA_DIR / f"{clip_id}.mp4"
-        if config.MERGE_AUDIO_TRACKS and info["audio_tracks"] > 1:
+        if settings.get("merge_audio_tracks") and info["audio_tracks"] > 1:
             merged = int(media.merge_audio(full, merged_path, info["audio_tracks"]))
         if not merged:
             merged_path.unlink(missing_ok=True)
@@ -162,7 +165,8 @@ class Scanner:
             if row or moved:
                 conn.execute(
                     "UPDATE clips SET path = ?, filename = ?, missing = 0, size = ?, mtime = ?, duration = ?, "
-                    "width = ?, height = ?, vcodec = ?, audio_tracks = ?, merged_audio = ? WHERE id = ?",
+                    "width = ?, height = ?, vcodec = ?, audio_tracks = ?, merged_audio = ?, thumb_custom = 0, "
+                    "thumb_v = thumb_v + 1 WHERE id = ?",
                     (path, filename, *media_cols, clip_id),
                 )
                 log.info("%s clip %s", "Moved" if moved else "Updated", path)
@@ -170,12 +174,14 @@ class Scanner:
             game, when = games.parse_clip_path(path)
             recorded = when or datetime.fromtimestamp(mtime)
             game_id = db.get_or_create_game(conn, game) if game else None
+            if game_id:  # an existing game may spell the name better than the file does
+                game = conn.execute("SELECT name FROM games WHERE id = ?", (game_id,)).fetchone()["name"]
             conn.execute(
                 "INSERT INTO clips (id, path, filename, title, game_id, size, mtime, duration, width, height, "
                 "vcodec, audio_tracks, merged_audio, recorded_at, visibility) "
                 "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (clip_id, path, filename, games.default_title(path, game, when), game_id, *media_cols,
-                 recorded.isoformat(timespec="seconds"), config.DEFAULT_VISIBILITY),
+                 recorded.isoformat(timespec="seconds"), settings.get("default_visibility")),
             )
         log.info("Imported %s (game: %s)", path, game or "none")
         return True
@@ -205,16 +211,15 @@ class Scanner:
                 # File names lose punctuation ("Counter Strike 2"); show Steam's spelling
                 # when it is the same name.
                 if games.norm(match["name"]) == games.norm(g["name"]) and match["name"] != g["name"]:
-                    conn.execute("UPDATE OR IGNORE games SET name = ? WHERE id = ?", (match["name"], g["id"]))
+                    renamed = conn.execute("UPDATE OR IGNORE games SET name = ? WHERE id = ?", (match["name"], g["id"]))
+                    if renamed.rowcount:   # carry the spelling into titles made from the file name
+                        prefix = g["name"] + " · "
+                        conn.execute(
+                            "UPDATE clips SET title = ? || substr(title, ?) WHERE game_id = ? AND substr(title, 1, ?) = ?",
+                            (match["name"] + " · ", len(prefix) + 1, g["id"], len(prefix), prefix))
             log.info("Matched '%s' to Steam app %s (%s)", g["name"], match["appid"], match["name"])
-            refresh_cover(g["id"], match["appid"], match.get("image", ""))
+            library.refresh_game(g["id"], match.get("image", ""))
             time.sleep(1)  # be polite to the store API
-
-
-def refresh_cover(game_id: int, appid: int, fallback_url: str = "") -> None:
-    ok = games.fetch_cover(appid, config.COVERS_DIR / f"{game_id}.jpg", fallback_url)
-    with db.connect() as conn:
-        conn.execute("UPDATE games SET has_cover = ? WHERE id = ? AND steam_appid = ?", (int(ok), game_id, appid))
 
 
 scanner = Scanner()

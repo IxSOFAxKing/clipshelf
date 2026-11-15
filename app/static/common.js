@@ -252,3 +252,192 @@ function editDialog(clip, onSaved) {
     );
   });
 }
+
+Object.assign(ICONS, {
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3h.1a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8v.1a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+  image: '<rect x="3.5" y="5" width="17" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="m4.5 17 5-4.5 3.5 3 2.5-2 4 3.5"/>',
+  grid: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
+  film: '<rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="m10 9.5 5 2.5-5 2.5z"/>',
+});
+
+// Game name + Steam search, shared by the clip editor's bulk variant.
+// Resolves with {game, steam_appid?, steam_name?} or null if cancelled.
+function gamePickerDialog(heading) {
+  return new Promise((resolve) => {
+    let result = null;
+    const dlg = openDialog((dlg) => {
+      let picked;
+      const game = h("input", { type: "text", maxLength: 120, placeholder: "Game name (empty for no game)", list: "picker-games" });
+      const names = h("datalist", { id: "picker-games" });
+      api("/api/games").then((d) => names.append(...d.games.map((g) => h("option", { value: g.name })))).catch(() => {});
+      const results = h("div", { class: "steam-results" });
+      game.addEventListener("input", () => { picked = undefined; });
+      async function find() {
+        if (!game.value.trim()) return game.focus();
+        results.replaceChildren(h("div", { class: "hint" }, "Searching Steam…"));
+        try {
+          const data = await api(`/api/steam/search?q=${encodeURIComponent(game.value.trim())}`);
+          fill(results, data.results.length ? data.results.map((r) =>
+            h("button", { type: "button", onclick: () => { game.value = r.name; picked = r; results.replaceChildren(); } },
+              h("img", { src: r.image, alt: "", loading: "lazy" }), h("span", null, r.name), h("small", null, r.appid)))
+            : h("div", { class: "hint" }, "Nothing found on Steam for that name."));
+        } catch (err) { fill(results, h("div", { class: "error" }, err.message)); }
+      }
+      return h("form", { onsubmit: (e) => {
+        e.preventDefault();
+        result = { game: game.value.trim() };
+        if (picked) Object.assign(result, { steam_appid: picked.appid, steam_name: picked.name });
+        dlg.close();
+      } },
+        h("h2", null, heading),
+        h("div", { class: "field" }, h("div", { class: "row" }, game,
+          h("button", { type: "button", class: "btn", onclick: find }, "Find on Steam")), names, results),
+        h("div", { class: "dialog-actions" },
+          h("button", { type: "button", class: "btn ghost", onclick: () => dlg.close() }, "Cancel"),
+          h("button", { class: "btn primary" }, "Apply")));
+    });
+    dlg.addEventListener("close", () => resolve(result));
+  });
+}
+
+// Edit a game: name, Steam match, details and artwork. `onChange(game)` fires after every saved change.
+function gameDialog(game, onChange) {
+  openDialog((dlg) => {
+    dlg.classList.add("wide");
+    let tab = "details";
+    const body = h("div", { class: "tab-body" });
+    const error = h("div", { class: "error" });
+    const changed = (g) => { game = Object.assign({}, game, g); onChange?.(game); };
+    const run = async (fn) => {
+      error.textContent = "";
+      try { await fn(); } catch (err) { error.textContent = err.message; }
+    };
+
+    // ---- details tab
+    function details() {
+      const name = h("input", { type: "text", value: game.name, maxLength: 120, required: true });
+      const desc = h("textarea", { value: game.description || "", rows: 4, maxLength: 2000 });
+      const dev = h("input", { type: "text", value: game.developer || "" });
+      const rel = h("input", { type: "text", value: game.release_date || "" });
+      const genres = h("input", { type: "text", value: game.genres || "", placeholder: "Action, Shooter" });
+      const search = h("input", { type: "text", value: game.name, placeholder: "Game name or Steam app ID" });
+      const results = h("div", { class: "steam-results" });
+
+      async function find() {
+        if (!search.value.trim()) return search.focus();
+        fill(results, h("div", { class: "hint" }, "Searching Steam…"));
+        try {
+          const data = await api(`/api/steam/search?q=${encodeURIComponent(search.value.trim())}`);
+          fill(results, data.results.length ? data.results.map((r) =>
+            h("button", { type: "button", onclick: () => run(async () => {
+              fill(results, h("div", { class: "hint" }, `Loading ${r.name} from Steam…`));
+              changed(await api(`/api/games/${game.id}`, { method: "PATCH", body: { name: r.name, steam_appid: r.appid, steam_name: r.name, wait: true } }));
+              render();
+              toast(`Matched to ${r.name}`);
+            }) }, h("img", { src: r.image, alt: "", loading: "lazy" }), h("span", null, r.name), h("small", null, r.appid)))
+            : h("div", { class: "hint" }, "Nothing found. Try a shorter name, or paste the app ID from the game's Steam or SteamDB address."));
+        } catch (err) { fill(results, h("div", { class: "error" }, err.message)); }
+      }
+      search.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); find(); } });
+
+      const match = h("div", { class: "match" });
+      if (game.steam_appid) {
+        match.append(
+          h("div", null, h("strong", null, game.steam_name || "Steam app"), ` · app ${game.steam_appid} · `,
+            h("a", { href: `https://steamdb.info/app/${game.steam_appid}/`, target: "_blank", rel: "noopener" }, "SteamDB"), " · ",
+            h("a", { href: `https://store.steampowered.com/app/${game.steam_appid}/`, target: "_blank", rel: "noopener" }, "Steam")),
+          h("div", { class: "row" },
+            h("button", { type: "button", class: "btn small", onclick: () => run(async () => {
+              changed(await api(`/api/games/${game.id}/refresh`, { method: "POST", body: {} })); render(); toast("Details refreshed from Steam");
+            }) }, "Refresh details"),
+            h("button", { type: "button", class: "btn small", onclick: () => run(async () => {
+              changed(await api(`/api/games/${game.id}`, { method: "PATCH", body: { steam_appid: null } })); render();
+            }) }, "Remove match")));
+      } else {
+        match.append(h("div", { class: "hint" }, "Not matched to a Steam game. Search below to add artwork and details, or fill them in by hand."));
+      }
+
+      return h("form", { onsubmit: (e) => { e.preventDefault(); run(async () => {
+        const g = await api(`/api/games/${game.id}`, { method: "PATCH", body: {
+          name: name.value, description: desc.value, developer: dev.value, release_date: rel.value, genres: genres.value } });
+        changed(g); dlg.close(); toast("Game saved");
+      }); } },
+        h("label", { class: "field" }, h("span", null, "Name"), name),
+        h("div", { class: "field" }, h("span", null, "Steam match"), match,
+          h("div", { class: "row" }, search, h("button", { type: "button", class: "btn", onclick: find }, "Search Steam")), results),
+        h("label", { class: "field" }, h("span", null, "Description"), desc),
+        h("div", { class: "field-row" },
+          h("label", { class: "field" }, h("span", null, "Developer"), dev),
+          h("label", { class: "field" }, h("span", null, "Released"), rel)),
+        h("label", { class: "field" }, h("span", null, "Genres"), genres),
+        h("div", { class: "dialog-actions" },
+          h("button", { type: "button", class: "btn ghost", onclick: () => dlg.close() }, "Close"),
+          h("button", { class: "btn primary" }, "Save")));
+    }
+
+    // ---- artwork tab
+    let slot = "cover";
+    function artwork() {
+      const SLOTS = { cover: ["Cover", "Shown in the sidebar, the games grid and on share pages."],
+        hero: ["Background", "The wide banner behind the game's page."] };
+      const current = game[slot];
+      const choices = h("div", { class: "art-grid" }, h("div", { class: "hint" }, game.steam_appid ? "Loading artwork from Steam…" : ""));
+      const use = (payload) => run(async () => {
+        choices.classList.add("busy");
+        try {
+          changed(payload instanceof Blob
+            ? await uploadArt(game.id, slot, payload)
+            : await api(`/api/games/${game.id}/art/${slot}`, { method: "POST", body: { url: payload } }));
+          toast(`${SLOTS[slot][0]} updated`);
+        } finally { choices.classList.remove("busy"); render(); }
+      });
+      if (game.steam_appid) {
+        api(`/api/games/${game.id}/art`).then((d) => {
+          fill(choices, d.art.length ? d.art.map((a) =>
+            h("button", { type: "button", class: "art-choice", title: `Use ${a.label}`, onclick: () => use(a.url) },
+              h("img", { src: a.thumb, alt: a.label, loading: "lazy", onerror: (e) => e.target.closest("button").remove() }),
+              h("span", null, a.label)))
+            : h("div", { class: "hint" }, "Steam has no artwork for this game."));
+        }).catch((err) => fill(choices, h("div", { class: "error" }, err.message)));
+      } else {
+        fill(choices, h("div", { class: "hint" }, "Match the game to Steam on the Details tab to pick from its artwork, or use your own image below."));
+      }
+      const url = h("input", { type: "text", placeholder: "https://…/image.jpg", "aria-label": "Image address" });
+      const file = h("input", { type: "file", accept: "image/*", hidden: true, onchange: () => file.files[0] && use(file.files[0]) });
+      return h("div", { class: "art-tab" },
+        h("div", { class: "seg two" }, Object.entries(SLOTS).map(([key, [label, help]]) =>
+          h("label", null, h("input", { type: "radio", name: "slot", checked: slot === key, onchange: () => { slot = key; render(); } }),
+            label, h("small", null, help)))),
+        h("div", { class: `art-current ${slot}` }, current ? h("img", { src: current, alt: "" }) : h("span", null, "No image yet")),
+        h("div", { class: "field" }, h("span", null, "Choose from Steam"), choices),
+        h("div", { class: "field" }, h("span", null, "Or use your own image"),
+          h("div", { class: "row" }, url,
+            h("button", { type: "button", class: "btn", onclick: () => url.value.trim() ? use(url.value.trim()) : url.focus() }, "Use address"),
+            h("button", { type: "button", class: "btn", onclick: () => file.click() }, "Upload…"), file)),
+        h("div", { class: "dialog-actions" },
+          game.art_locked ? h("button", { type: "button", class: "btn ghost", onclick: () => run(async () => {
+            changed(await api(`/api/games/${game.id}/art`, { method: "DELETE" })); render(); toast("Back to Steam's artwork");
+          }) }, "Reset to Steam artwork") : null,
+          h("div", { class: "spacer" }),
+          h("button", { type: "button", class: "btn primary", onclick: () => dlg.close() }, "Done")));
+    }
+
+    const tabs = h("div", { class: "tabs", role: "tablist" });
+    function render() {
+      fill(tabs, [["details", "Details"], ["artwork", "Artwork"]].map(([key, label]) =>
+        h("button", { type: "button", role: "tab", class: tab === key ? "active" : "", onclick: () => { tab = key; error.textContent = ""; render(); } }, label)));
+      fill(body, tab === "details" ? details() : artwork());
+    }
+    render();
+    return h("div", { class: "dialog-pad" }, h("h2", null, `Edit ${game.name}`), tabs, body, error);
+  });
+}
+
+async function uploadArt(gameId, slot, blob) {
+  const res = await fetch(`/api/games/${gameId}/art/${slot}`, { method: "PUT", body: blob, credentials: "same-origin",
+    headers: { "Content-Type": "application/octet-stream" } });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error((data && data.detail) || "Upload failed");
+  return data;
+}

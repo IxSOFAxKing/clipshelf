@@ -38,9 +38,27 @@ CREATE TABLE IF NOT EXISTS clips (
     views       INTEGER NOT NULL DEFAULT 0,
     missing     INTEGER NOT NULL DEFAULT 0  -- file no longer in CLIPS_DIR
 );
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL          -- JSON
+);
 CREATE INDEX IF NOT EXISTS clips_game ON clips(game_id);
 CREATE INDEX IF NOT EXISTS clips_recorded ON clips(recorded_at);
 """
+
+
+# Columns added after the first release (applied to existing databases on start).
+MIGRATIONS = [
+    ("games", "description", "TEXT"),
+    ("games", "release_date", "TEXT"),
+    ("games", "developer", "TEXT"),
+    ("games", "genres", "TEXT"),
+    ("games", "has_hero", "INTEGER NOT NULL DEFAULT 0"),
+    ("games", "art_locked", "INTEGER NOT NULL DEFAULT 0"),   # artwork chosen by hand
+    ("games", "art_v", "INTEGER NOT NULL DEFAULT 0"),        # bumps when artwork changes
+    ("clips", "thumb_v", "INTEGER NOT NULL DEFAULT 0"),
+    ("clips", "thumb_custom", "INTEGER NOT NULL DEFAULT 0"), # thumbnail frame chosen by hand
+]
 
 
 @contextmanager
@@ -62,6 +80,10 @@ def init() -> None:
     with connect() as conn:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.executescript(SCHEMA)
+        for table, column, definition in MIGRATIONS:
+            have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+            if column not in have:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
 def _key(name: str) -> str:

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{title}} · {{site_name}}</title>
 <meta name="robots" content="{{robots}}">
-<meta name="theme-color" content="#ff7a45">
+<meta name="theme-color" content="{{accent}}">
 <meta name="description" content="{{description}}">
 <meta property="og:site_name" content="{{site_name}}">
 <meta property="og:type" content="video.other">
@@ -27,6 +27,7 @@
 <meta name="twitter:player:height" content="{{height}}">
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/style.css">
+<style>:root { --accent: {{accent}}; --accent-ink: {{accent_ink}}; }</style>
 </head>
 <body class="watch">
 <header class="topbar">
@@ -36,7 +37,7 @@
 </header>
 <main class="watch-main">
   <div class="player" id="player" style="--ar: {{width}} / {{height}}">
-    <video id="video" controls playsinline preload="metadata" poster="/t/{{id_raw}}.jpg" src="/v/{{id_raw}}.mp4"></video>
+    <video id="video" controls playsinline preload="metadata" poster="/t/{{id_raw}}.jpg?v={{thumb_v}}" src="/v/{{id_raw}}.mp4"></video>
   </div>
   <div id="details"></div>
 </main>

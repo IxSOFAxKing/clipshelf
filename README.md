@@ -7,13 +7,21 @@ one a link you can share.
 - **Folder watching**: new files are picked up within about 30 seconds, moved
   files keep their links, and deleted files drop out of the library. Your clips
   folder is mounted read-only; nothing in it is ever changed.
-- **Games from file names**: `Counter-Strike 2__2026-11-10__21-15-32.mp4` is
-  filed under *Counter-Strike 2* and dated from the name. Each game is matched
-  to Steam for cover art and a SteamDB link.
+- **Games from file names**: `ARC-Raiders__2026-09-12__00-31-35.mp4` is filed
+  under *ARC Raiders* and dated from the name. Each game is matched to Steam
+  for artwork, a description, genres and a SteamDB link.
+- **Game pages**: every game has a banner page with its artwork and details,
+  and there is a grid of all your games.
+- **Fix match and artwork**: search Steam by name or app ID to correct a match,
+  then pick the cover and background from Steam's artwork and screenshots,
+  paste an image address, or upload your own.
 - **Sharing**: every clip is private, unlisted (anyone with the link) or public
   (listed on the home page). Share pages embed as playable video in Discord.
-- **Fix-ups in the browser**: rename a clip, move it to another game, or
-  correct a wrong Steam match for one clip or the whole game.
+- **Clip tools**: rename, move between games, favorite, pick any frame as the
+  thumbnail, and select many clips at once to change them together.
+- **Settings in the browser**: site name, accent colour, sorting, scan
+  interval, file-name rules with a live tester, sharing options, password, and
+  library status with maintenance actions.
 - **Mixed audio**: clips recorded with separate game and microphone tracks get
   a copy with the tracks mixed, since browsers only play the first one.
 
@@ -45,20 +53,24 @@ Files that are still being copied are left alone until they stop growing.
 
 ## Settings
 
-All optional, set as environment variables.
+Open the gear icon in the header. Changes save as you make them and apply
+straight away.
+
+The environment variables below only set the starting values; once a setting is
+changed in the browser, the browser's value wins.
 
 | Variable | Default | What it does |
 | --- | --- | --- |
-| `ADMIN_PASSWORD` | generated | Sign-in password. If empty, one is generated, printed in the logs and saved to `/data/admin_password.txt`. |
+| `ADMIN_PASSWORD` | generated | Sign-in password. If empty, one is generated, printed in the logs and saved to `/data/admin_password.txt`. Changing this value also resets a password set in the browser. |
 | `BASE_URL` | from the request | Public address, e.g. `https://clips.example.com`. Used in share links and embeds. |
 | `SITE_NAME` | `Clipshelf` | Name shown in the header and in embeds. |
 | `DEFAULT_VISIBILITY` | `private` | Visibility for newly imported clips: `private`, `unlisted` or `public`. |
 | `SCAN_INTERVAL` | `30` | Seconds between checks of the clips folder. |
-| `STEAM_LOOKUP` | `true` | Match game names to Steam for cover art. |
+| `STEAM_LOOKUP` | `true` | Match game names to Steam. |
 | `FILENAME_PATTERN` | none | Regular expression tried before the built-in ones. Needs a named group `game`; `date` and `time` are optional. |
 | `FOLDER_AS_GAME` | `true` | Use the parent folder name as the game when the file name has none. |
 | `MERGE_AUDIO_TRACKS` | `true` | Keep a mixed-audio copy of clips with more than one audio track (stored in `/data/media`). |
-| `VIDEO_EXTENSIONS` | `mp4,mkv,mov,webm,m4v` | File types to import. |
+| `VIDEO_EXTENSIONS` | `mp4,mkv,mov,webm,m4v` | File types to import (environment only). |
 | `TZ` | UTC | Time zone, used when a clip's date comes from the file rather than its name. |
 
 ### How the game is worked out

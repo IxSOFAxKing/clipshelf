@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings · {{site_name}}</title>
+<meta name="robots" content="noindex">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/style.css">
+<style>:root { --accent: {{accent}}; --accent-ink: {{accent_ink}}; }</style>
+</head>
+<body class="settings">
+<header class="topbar">
+  <a class="brand" href="/"><span class="brand-mark"></span><span class="brand-name">{{site_name}}</span></a>
+  <div class="spacer"></div>
+  <div class="topbar-actions"><a class="btn ghost" href="/">Back to library</a></div>
+</header>
+<div class="settings-layout">
+  <nav class="settings-nav" id="settings-nav" aria-label="Settings sections"></nav>
+  <main class="settings-main" id="settings-main"></main>
+</div>
+<script src="/static/common.js"></script>
+<script src="/static/settings.js"></script>
+</body>
+</html>
