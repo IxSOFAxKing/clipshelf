@@ -1,0 +1,23 @@
+services:
+  clipshelf:
+    image: ghcr.io/ixsofaxking/clipshelf:latest
+    # To build from source instead, replace the line above with:  build: .
+    container_name: clipshelf
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # Password for signing in. If left empty, one is generated and printed in the logs.
+      ADMIN_PASSWORD: "change-me"
+      # Public address of the site, used for share links and Discord embeds.
+      # Leave empty to use whatever address the visitor came in on.
+      BASE_URL: ""
+      TZ: "America/New_York"
+    volumes:
+      # The folder your clips land in (read-only: Clipshelf never changes your files).
+      - /path/to/your/clips:/clips:ro
+      # Thumbnails, game art and the database.
+      - clipshelf-data:/data
+
+volumes:
+  clipshelf-data:

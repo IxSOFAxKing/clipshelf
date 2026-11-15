@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}} · {{site_name}}</title>
+<meta name="robots" content="{{robots}}">
+<meta name="theme-color" content="#ff7a45">
+<meta name="description" content="{{description}}">
+<meta property="og:site_name" content="{{site_name}}">
+<meta property="og:type" content="video.other">
+<meta property="og:title" content="{{title}}">
+<meta property="og:description" content="{{description}}">
+<meta property="og:url" content="{{page_url}}">
+<meta property="og:image" content="{{thumb_url}}">
+<meta property="og:video" content="{{video_url}}">
+<meta property="og:video:url" content="{{video_url}}">
+<meta property="og:video:secure_url" content="{{video_url}}">
+<meta property="og:video:type" content="video/mp4">
+<meta property="og:video:width" content="{{width}}">
+<meta property="og:video:height" content="{{height}}">
+<meta name="twitter:card" content="player">
+<meta name="twitter:title" content="{{title}}">
+<meta name="twitter:image" content="{{thumb_url}}">
+<meta name="twitter:player" content="{{video_url}}">
+<meta name="twitter:player:width" content="{{width}}">
+<meta name="twitter:player:height" content="{{height}}">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="watch">
+<header class="topbar">
+  <a class="brand" href="/"><span class="brand-mark"></span><span class="brand-name">{{site_name}}</span></a>
+  <div class="spacer"></div>
+  <div class="topbar-actions" id="topbar-actions"></div>
+</header>
+<main class="watch-main">
+  <div class="player" id="player" style="--ar: {{width}} / {{height}}">
+    <video id="video" controls playsinline preload="metadata" poster="/t/{{id_raw}}.jpg" src="/v/{{id_raw}}.mp4"></video>
+  </div>
+  <div id="details"></div>
+</main>
+<script id="clip-data" type="application/json">{{clip_json_raw}}</script>
+<script src="/static/common.js"></script>
+<script src="/static/watch.js"></script>
+</body>
+</html>

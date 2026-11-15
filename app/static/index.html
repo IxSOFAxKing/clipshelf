@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{site_name}}</title>
+<meta name="theme-color" content="#0d0f14">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="library">
+<header class="topbar">
+  <button class="icon-btn menu-btn" id="menu-btn" aria-label="Games"></button>
+  <a class="brand" href="/"><span class="brand-mark"></span><span class="brand-name">{{site_name}}</span></a>
+  <label class="search">
+    <span class="search-icon"></span>
+    <input id="search" type="search" placeholder="Search clips" autocomplete="off" aria-label="Search clips">
+  </label>
+  <div class="topbar-actions" id="topbar-actions"></div>
+</header>
+<div class="layout">
+  <nav class="sidebar" id="sidebar" aria-label="Games"></nav>
+  <main class="content">
+    <div class="toolbar">
+      <h1 id="heading">All clips</h1>
+      <span class="count" id="count"></span>
+      <div class="spacer"></div>
+      <div class="filters" id="filters"></div>
+      <select id="sort" aria-label="Sort">
+        <option value="newest">Newest</option>
+        <option value="oldest">Oldest</option>
+        <option value="views">Most viewed</option>
+        <option value="longest">Longest</option>
+        <option value="title">Title A–Z</option>
+      </select>
+    </div>
+    <div id="notice"></div>
+    <div class="grid" id="grid"></div>
+    <div class="more" id="more"></div>
+  </main>
+</div>
+<script src="/static/common.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
